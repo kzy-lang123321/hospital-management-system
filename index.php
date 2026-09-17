@@ -854,6 +854,634 @@ if ($action !== null) {
         exit;
     }
 
+    // ------------------------------------------------------------------------
+    // STAGE 2 ACTION HANDLERS
+    // ------------------------------------------------------------------------
+
+    // Emergency Intake Action
+    if ($action === 'emergency_intake' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'nurse', 'receptionist']);
+
+        $existingPatientId = !empty($_POST['existing_patient_id']) ? (int)$_POST['existing_patient_id'] : null;
+        $doctorId = (int)($_POST['attending_doctor_id'] ?? Auth::id());
+        $triageLevel = clean_input($_POST['triage_level'] ?? 'ESI-3');
+        $chiefComplaint = clean_input($_POST['chief_complaint'] ?? 'Acute ER Presentation');
+
+        try {
+            $db->beginTransaction();
+
+            if ($existingPatientId) {
+                $patientId = $existingPatientId;
+            } else {
+                $quickFirst = clean_input($_POST['quick_first_name'] ?? 'Trauma');
+                $quickLast = clean_input($_POST['quick_last_name'] ?? 'Patient');
+                $quickGender = clean_input($_POST['quick_gender'] ?? 'Male');
+                $quickAge = !empty($_POST['quick_age']) ? (int)$_POST['quick_age'] : 30;
+                $quickPhone = clean_input($_POST['quick_phone'] ?? '');
+                $quickBlood = clean_input($_POST['quick_blood_group'] ?? 'Unknown');
+
+                $latestId = $db->query("SELECT COALESCE(MAX(id), 0) FROM `patients`")->fetchColumn();
+                $mrn = 'MRN-' . date('Y') . '-' . str_pad((string)($latestId + 1), 4, '0', STR_PAD_LEFT);
+
+                $pStmt = $db->prepare("
+                    INSERT INTO `patients` (`mrn`, `first_name`, `last_name`, `gender`, `age`, `blood_group`, `phone_primary`, `registered_by`)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ");
+                $pStmt->execute([$mrn, $quickFirst, $quickLast, $quickGender, $quickAge, $quickBlood, $quickPhone, Auth::id()]);
+                $patientId = (int)$db->lastInsertId();
+            }
+
+            // Generate encounter number
+            $encCount = $db->query("SELECT COALESCE(MAX(id), 0) FROM `encounters`")->fetchColumn();
+            $encNum = 'ENC-' . date('Y') . '-' . str_pad((string)($encCount + 1), 4, '0', STR_PAD_LEFT);
+
+            $encStmt = $db->prepare("
+                INSERT INTO `encounters` 
+                (`encounter_number`, `patient_id`, `encounter_type`, `department_id`, `attending_doctor_id`, `admission_datetime`, `encounter_status`, `triage_level`, `primary_diagnosis`, `created_by`)
+                VALUES (?, ?, 'Emergency', 7, ?, NOW(), 'In-Progress', ?, ?, ?)
+            ");
+            $encStmt->execute([$encNum, $patientId, $doctorId, $triageLevel, $chiefComplaint, Auth::id()]);
+            $encounterId = (int)$db->lastInsertId();
+
+            // Record initial vitals if provided
+            $sys = !empty($_POST['systolic_bp']) ? (int)$_POST['systolic_bp'] : null;
+            $dia = !empty($_POST['diastolic_bp']) ? (int)$_POST['diastolic_bp'] : null;
+            $pulse = !empty($_POST['pulse_rate']) ? (int)$_POST['pulse_rate'] : null;
+            $spo2 = !empty($_POST['spo2_percentage']) ? (float)$_POST['spo2_percentage'] : null;
+
+            if ($sys || $pulse || $spo2) {
+                $vStmt = $db->prepare("
+                    INSERT INTO `clinical_vitals` (`encounter_id`, `patient_id`, `systolic_bp`, `diastolic_bp`, `pulse_rate_bpm`, `spo2_percentage`, `recorded_by`)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ");
+                $vStmt->execute([$encounterId, $patientId, $sys, $dia, $pulse, $spo2, Auth::id()]);
+            }
+
+            AuditLogger::log('CREATE', 'encounters', $encounterId, null, ['type' => 'Emergency', 'triage' => $triageLevel, 'patient_id' => $patientId]);
+            $db->commit();
+
+            set_flash('success', "Emergency Case registered ($encNum) with Triage $triageLevel.");
+            header("Location: index.php?page=emergency");
+            exit;
+        } catch (Exception $e) {
+            $db->rollBack();
+            set_flash('danger', "Emergency intake failed: " . $e->getMessage());
+            header("Location: index.php?page=emergency");
+            exit;
+        }
+    }
+
+    // Emergency Disposition Action
+    if ($action === 'emergency_disposition' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'nurse']);
+
+        $encounterId = (int)($_POST['encounter_id'] ?? 0);
+        $patientId = (int)($_POST['patient_id'] ?? 0);
+        $primaryDiag = clean_input($_POST['primary_diagnosis'] ?? 'Emergency Evaluation Completed');
+        $disposition = clean_input($_POST['discharge_disposition'] ?? 'Discharged_Home');
+        $bedId = !empty($_POST['bed_id']) ? (int)$_POST['bed_id'] : null;
+        $summary = clean_input($_POST['clinical_summary'] ?? '');
+
+        try {
+            $db->beginTransaction();
+
+            if (in_array($disposition, ['Admitted_to_Ward', 'Admitted_to_ICU']) && $bedId) {
+                // Admit to Inpatient
+                $db->prepare("
+                    UPDATE `encounters` 
+                    SET `encounter_status` = 'Admitted', `discharge_disposition` = ?, `primary_diagnosis` = ? 
+                    WHERE `id` = ?
+                ")->execute([$disposition, $primaryDiag, $encounterId]);
+
+                $admStmt = $db->prepare("
+                    INSERT INTO `admissions` (`encounter_id`, `patient_id`, `admitting_doctor_id`, `admission_reason`, `initial_bed_id`, `current_bed_id`, `admission_datetime`, `status`)
+                    VALUES (?, ?, ?, ?, ?, ?, NOW(), 'Admitted')
+                ");
+                $admStmt->execute([$encounterId, $patientId, Auth::id(), $primaryDiag, $bedId, $bedId]);
+                $admId = (int)$db->lastInsertId();
+
+                $db->prepare("UPDATE `beds` SET `status` = 'Occupied' WHERE `id` = ?")->execute([$bedId]);
+                $db->prepare("INSERT INTO `bed_allocations` (`admission_id`, `bed_id`, `allocated_at`, `allocated_by`) VALUES (?, ?, NOW(), ?)")
+                   ->execute([$admId, $bedId, Auth::id()]);
+            } else {
+                // Discharged / Transferred / Other
+                $db->prepare("
+                    UPDATE `encounters` 
+                    SET `encounter_status` = 'Completed', `discharge_disposition` = ?, `discharge_datetime` = NOW(), `primary_diagnosis` = ? 
+                    WHERE `id` = ?
+                ")->execute([$disposition, $primaryDiag, $encounterId]);
+            }
+
+            if (!empty($summary)) {
+                $db->prepare("
+                    INSERT INTO `consultation_notes` (`encounter_id`, `doctor_id`, `plan`, `assessment`)
+                    VALUES (?, ?, ?, ?)
+                ")->execute([$encounterId, Auth::id(), "Disposition: $disposition - $summary", $primaryDiag]);
+            }
+
+            AuditLogger::log('UPDATE', 'encounters', $encounterId, null, ['disposition' => $disposition, 'diagnosis' => $primaryDiag]);
+            $db->commit();
+
+            set_flash('success', "Emergency case disposition saved ($disposition).");
+            header("Location: index.php?page=emergency");
+            exit;
+        } catch (Exception $e) {
+            $db->rollBack();
+            set_flash('danger', "Disposition update failed: " . $e->getMessage());
+            header("Location: index.php?page=emergency");
+            exit;
+        }
+    }
+
+    // Radiology Order Store Action
+    if ($action === 'radiology_order_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'receptionist']);
+
+        $encounterId = (int)($_POST['encounter_id'] ?? 0);
+        $serviceId = (int)($_POST['service_id'] ?? 0);
+        $priority = clean_input($_POST['priority'] ?? 'Routine');
+        $orderDt = !empty($_POST['order_datetime']) ? clean_input($_POST['order_datetime']) : date('Y-m-d H:i:s');
+        $indication = clean_input($_POST['clinical_indication'] ?? '');
+
+        $orderCount = $db->query("SELECT COALESCE(MAX(id), 0) FROM `radiology_orders`")->fetchColumn();
+        $orderNum = 'RAD-' . date('Y') . '-' . str_pad((string)($orderCount + 1), 4, '0', STR_PAD_LEFT);
+
+        $stmt = $db->prepare("
+            INSERT INTO `radiology_orders` (`order_number`, `encounter_id`, `service_id`, `ordered_by`, `order_datetime`, `priority`, `clinical_indication`, `status`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'Ordered')
+        ");
+        $stmt->execute([$orderNum, $encounterId, $serviceId, Auth::id(), $orderDt, $priority, $indication]);
+
+        AuditLogger::log('CREATE', 'radiology_orders', $db->lastInsertId(), null, ['order' => $orderNum, 'service_id' => $serviceId]);
+        set_flash('success', "Radiology order ($orderNum) placed successfully.");
+        header("Location: index.php?page=radiology");
+        exit;
+    }
+
+    // Radiology Report Save Action
+    if ($action === 'radiology_report_save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'lab_technician']);
+
+        $orderId = (int)($_POST['radiology_order_id'] ?? 0);
+        $technique = clean_input($_POST['technique_used'] ?? '');
+        $findings = clean_input($_POST['radiological_findings'] ?? '');
+        $impression = clean_input($_POST['impression'] ?? '');
+        $reportStatus = clean_input($_POST['report_status'] ?? 'Finalized');
+
+        $stmt = $db->prepare("
+            INSERT INTO `radiology_reports` (`radiology_order_id`, `radiologist_id`, `technique_used`, `radiological_findings`, `impression`, `report_status`, `finalized_at`)
+            VALUES (?, ?, ?, ?, ?, ?, NOW())
+            ON DUPLICATE KEY UPDATE 
+                `technique_used` = VALUES(`technique_used`),
+                `radiological_findings` = VALUES(`radiological_findings`),
+                `impression` = VALUES(`impression`),
+                `report_status` = VALUES(`report_status`),
+                `finalized_at` = NOW()
+        ");
+        $stmt->execute([$orderId, Auth::id(), $technique, $findings, $impression, $reportStatus]);
+
+        $db->prepare("UPDATE `radiology_orders` SET `status` = 'Reported' WHERE `id` = ?")->execute([$orderId]);
+
+        AuditLogger::log('UPDATE', 'radiology_orders', $orderId, null, ['status' => 'Reported']);
+        set_flash('success', "Radiology diagnostic report finalized and signed.");
+        header("Location: index.php?page=radiology");
+        exit;
+    }
+
+    // OT Room Status Action
+    if ($action === 'ot_room_status' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'nurse']);
+
+        $roomId = (int)($_POST['room_id'] ?? 0);
+        $status = clean_input($_POST['status'] ?? 'Available');
+
+        $db->prepare("UPDATE `ot_rooms` SET `status` = ? WHERE `id` = ?")->execute([$status, $roomId]);
+        set_flash('info', "OT Room status updated to $status.");
+        header("Location: index.php?page=ot");
+        exit;
+    }
+
+    // OT Booking Store Action
+    if ($action === 'ot_booking_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor']);
+
+        $encounterId = (int)($_POST['encounter_id'] ?? 0);
+        $otRoomId = (int)($_POST['ot_room_id'] ?? 0);
+        $leadSurgeonId = (int)($_POST['lead_surgeon_id'] ?? Auth::id());
+        $anesthesiologistId = !empty($_POST['anesthesiologist_id']) ? (int)$_POST['anesthesiologist_id'] : null;
+        $procName = clean_input($_POST['procedure_name'] ?? '');
+        $scheduledDt = clean_input($_POST['scheduled_datetime'] ?? date('Y-m-d H:i:s'));
+        $duration = (int)($_POST['estimated_duration_minutes'] ?? 120);
+        $anesType = clean_input($_POST['anesthesia_type'] ?? 'General');
+        $preOpDiag = clean_input($_POST['pre_op_diagnosis'] ?? '');
+
+        $patientId = $db->query("SELECT `patient_id` FROM `encounters` WHERE `id` = $encounterId")->fetchColumn();
+
+        $bookingCount = $db->query("SELECT COALESCE(MAX(id), 0) FROM `surgery_bookings`")->fetchColumn();
+        $bookingNum = 'OT-BKG-' . date('Y') . '-' . str_pad((string)($bookingCount + 1), 4, '0', STR_PAD_LEFT);
+
+        $stmt = $db->prepare("
+            INSERT INTO `surgery_bookings` 
+            (`booking_number`, `encounter_id`, `patient_id`, `ot_room_id`, `lead_surgeon_id`, `anesthesiologist_id`, `procedure_name`, `scheduled_datetime`, `estimated_duration_minutes`, `anesthesia_type`, `pre_op_diagnosis`, `booking_status`, `created_by`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?)
+        ");
+        $stmt->execute([$bookingNum, $encounterId, $patientId, $otRoomId, $leadSurgeonId, $anesthesiologistId, $procName, $scheduledDt, $duration, $anesType, $preOpDiag, Auth::id()]);
+
+        AuditLogger::log('CREATE', 'surgery_bookings', $db->lastInsertId(), null, ['booking' => $bookingNum, 'procedure' => $procName]);
+        set_flash('success', "Surgery booked successfully with reference $bookingNum.");
+        header("Location: index.php?page=ot");
+        exit;
+    }
+
+    // OT Start Surgery Action
+    if ($action === 'ot_start_surgery' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'nurse']);
+
+        $bookingId = (int)($_POST['booking_id'] ?? 0);
+        $bkg = $db->query("SELECT * FROM `surgery_bookings` WHERE `id` = $bookingId")->fetch(PDO::FETCH_ASSOC);
+
+        if ($bkg) {
+            $db->prepare("UPDATE `surgery_bookings` SET `booking_status` = 'In-Progress' WHERE `id` = ?")->execute([$bookingId]);
+            $db->prepare("UPDATE `ot_rooms` SET `status` = 'In_Surgery' WHERE `id` = ?")->execute([$bkg['ot_room_id']]);
+            set_flash('warning', "Surgery {$bkg['booking_number']} marked In-Progress. Room is now locked in surgery.");
+        }
+        header("Location: index.php?page=ot");
+        exit;
+    }
+
+    // OT Operative Record Store Action
+    if ($action === 'ot_record_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor']);
+
+        $bookingId = (int)($_POST['surgery_booking_id'] ?? 0);
+        $startTime = clean_input($_POST['start_time'] ?? date('Y-m-d H:i:s'));
+        $endTime = clean_input($_POST['end_time'] ?? date('Y-m-d H:i:s'));
+        $postOpDiag = clean_input($_POST['post_op_diagnosis'] ?? '');
+        $notes = clean_input($_POST['operative_notes'] ?? '');
+        $bloodLoss = (int)($_POST['blood_loss_ml'] ?? 50);
+        $implants = clean_input($_POST['implant_details'] ?? '');
+        $destination = clean_input($_POST['post_op_destination'] ?? 'PACU_Recovery');
+        $spongeCheck = !empty($_POST['sponge_swab_count_correct']) ? 1 : 0;
+
+        $bkg = $db->query("SELECT * FROM `surgery_bookings` WHERE `id` = $bookingId")->fetch(PDO::FETCH_ASSOC);
+
+        $stmt = $db->prepare("
+            INSERT INTO `surgical_records` 
+            (`surgery_booking_id`, `start_time`, `end_time`, `operative_notes`, `post_op_diagnosis`, `implant_details`, `sponge_swab_count_correct`, `blood_loss_ml`, `post_op_destination`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([$bookingId, $startTime, $endTime, $notes, $postOpDiag, $implants, $spongeCheck, $bloodLoss, $destination]);
+
+        $db->prepare("UPDATE `surgery_bookings` SET `booking_status` = 'Completed' WHERE `id` = ?")->execute([$bookingId]);
+        if ($bkg) {
+            $db->prepare("UPDATE `ot_rooms` SET `status` = 'Sterilization' WHERE `id` = ?")->execute([$bkg['ot_room_id']]);
+        }
+
+        AuditLogger::log('CREATE', 'surgical_records', $db->lastInsertId(), null, ['booking_id' => $bookingId, 'post_op' => $postOpDiag]);
+        set_flash('success', "Operative record saved. Surgery marked Completed and OT set to Sterilization.");
+        header("Location: index.php?page=ot");
+        exit;
+    }
+
+    // Blood Donor Store Action
+    if ($action === 'blood_donor_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'lab_technician']);
+
+        $fullName = clean_input($_POST['full_name'] ?? '');
+        $bloodGroup = clean_input($_POST['blood_group'] ?? 'O+');
+        $gender = clean_input($_POST['gender'] ?? 'Male');
+        $phone = clean_input($_POST['phone'] ?? '');
+        $cnic = clean_input($_POST['cnic'] ?? '');
+        $status = clean_input($_POST['screening_status'] ?? 'Eligible');
+
+        $dCount = $db->query("SELECT COALESCE(MAX(id), 0) FROM `blood_donors`")->fetchColumn();
+        $donorNum = 'DNR-' . date('Y') . '-' . str_pad((string)($dCount + 1), 3, '0', STR_PAD_LEFT);
+
+        $stmt = $db->prepare("
+            INSERT INTO `blood_donors` (`donor_number`, `full_name`, `gender`, `blood_group`, `phone`, `cnic`, `screening_status`, `last_donation_date`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE())
+        ");
+        $stmt->execute([$donorNum, $fullName, $gender, $bloodGroup, $phone, $cnic, $status]);
+
+        AuditLogger::log('CREATE', 'blood_donors', $db->lastInsertId(), null, ['donor' => $donorNum, 'group' => $bloodGroup]);
+        set_flash('success', "Blood Donor '$fullName' ($donorNum) registered successfully.");
+        header("Location: index.php?page=blood_bank&tab=donors");
+        exit;
+    }
+
+    // Blood Unit Store Action
+    if ($action === 'blood_unit_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'lab_technician']);
+
+        $donorId = !empty($_POST['donor_id']) ? (int)$_POST['donor_id'] : null;
+        $bloodGroup = clean_input($_POST['blood_group'] ?? 'O+');
+        $compType = clean_input($_POST['component_type'] ?? 'Packed_Red_Cells_PRBC');
+        $volume = (int)($_POST['volume_ml'] ?? 450);
+        $location = clean_input($_POST['storage_freezer_location'] ?? 'Cold Storage A1');
+        $colDate = clean_input($_POST['collection_date'] ?? date('Y-m-d'));
+        $expDate = clean_input($_POST['expiry_date'] ?? date('Y-m-d', strtotime('+35 days')));
+
+        $barcode = 'BLD-' . str_replace(['+', '-'], ['P', 'N'], $bloodGroup) . '-' . date('ymd') . '-' . rand(100, 999);
+
+        $stmt = $db->prepare("
+            INSERT INTO `blood_units` 
+            (`unit_barcode`, `donor_id`, `component_type`, `blood_group`, `volume_ml`, `collection_date`, `expiry_date`, `storage_freezer_location`, `status`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Available')
+        ");
+        $stmt->execute([$barcode, $donorId, $compType, $bloodGroup, $volume, $colDate, $expDate, $location]);
+
+        AuditLogger::log('CREATE', 'blood_units', $db->lastInsertId(), null, ['barcode' => $barcode, 'group' => $bloodGroup]);
+        set_flash('success', "Blood unit ($barcode) placed into storage.");
+        header("Location: index.php?page=blood_bank&tab=inventory");
+        exit;
+    }
+
+    // Blood Request Store Action
+    if ($action === 'blood_request_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'nurse']);
+
+        $encounterId = (int)($_POST['encounter_id'] ?? 0);
+        $compType = clean_input($_POST['component_type'] ?? 'Packed_Red_Cells_PRBC');
+        $unitsReq = (int)($_POST['units_required'] ?? 1);
+        $urgency = clean_input($_POST['urgency'] ?? 'Routine');
+        $indication = clean_input($_POST['clinical_indication'] ?? '');
+
+        $patientId = $db->query("SELECT `patient_id` FROM `encounters` WHERE `id` = $encounterId")->fetchColumn();
+
+        $reqCount = $db->query("SELECT COALESCE(MAX(id), 0) FROM `blood_requests`")->fetchColumn();
+        $reqNum = 'BRQ-' . date('Y') . '-' . str_pad((string)($reqCount + 1), 4, '0', STR_PAD_LEFT);
+
+        $stmt = $db->prepare("
+            INSERT INTO `blood_requests` 
+            (`request_number`, `encounter_id`, `patient_id`, `requested_by`, `component_type`, `units_required`, `urgency`, `clinical_indication`, `status`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending')
+        ");
+        $stmt->execute([$reqNum, $encounterId, $patientId, Auth::id(), $compType, $unitsReq, $urgency, $indication]);
+
+        AuditLogger::log('CREATE', 'blood_requests', $db->lastInsertId(), null, ['req' => $reqNum, 'urgency' => $urgency]);
+        set_flash('success', "Blood requisition ($reqNum) submitted to blood bank.");
+        header("Location: index.php?page=blood_bank&tab=requests");
+        exit;
+    }
+
+    // Blood Issue Unit Action
+    if ($action === 'blood_issue_unit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'lab_technician']);
+
+        $requestId = (int)($_POST['request_id'] ?? 0);
+        $unitId = (int)($_POST['unit_id'] ?? 0);
+
+        $db->prepare("UPDATE `blood_units` SET `status` = 'Issued' WHERE `id` = ?")->execute([$unitId]);
+        $db->prepare("UPDATE `blood_requests` SET `status` = 'Issued' WHERE `id` = ?")->execute([$requestId]);
+
+        AuditLogger::log('UPDATE', 'blood_units', $unitId, null, ['status' => 'Issued', 'request_id' => $requestId]);
+        set_flash('success', "Blood unit cross-matched and issued for transfusion.");
+        header("Location: index.php?page=blood_bank&tab=requests");
+        exit;
+    }
+
+    // Insurance Company Store Action
+    if ($action === 'insurance_company_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'cashier']);
+
+        $name = clean_input($_POST['company_name'] ?? '');
+        $code = clean_input($_POST['company_code'] ?? '');
+        $period = (int)($_POST['credit_period_days'] ?? 30);
+        $person = clean_input($_POST['contact_person'] ?? '');
+        $phone = clean_input($_POST['contact_phone'] ?? '');
+        $email = clean_input($_POST['contact_email'] ?? '');
+
+        $stmt = $db->prepare("
+            INSERT INTO `insurance_companies` (`company_name`, `company_code`, `contact_person`, `contact_phone`, `contact_email`, `credit_period_days`)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([$name, $code, $person, $phone, $email, $period]);
+
+        AuditLogger::log('CREATE', 'insurance_companies', $db->lastInsertId(), null, ['name' => $name, 'code' => $code]);
+        set_flash('success', "Panel Insurance partner '$name' registered.");
+        header("Location: index.php?page=insurance");
+        exit;
+    }
+
+    // Insurance Claim Store Action
+    if ($action === 'insurance_claim_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'cashier']);
+
+        $billId = (int)($_POST['bill_id'] ?? 0);
+        $patientId = (int)($_POST['patient_id'] ?? 0);
+        $companyId = (int)($_POST['company_id'] ?? 0);
+        $policyNum = clean_input($_POST['policy_number'] ?? '');
+        $preAuth = clean_input($_POST['pre_auth_code'] ?? '');
+        $claimAmt = (float)($_POST['claim_amount'] ?? 0.00);
+        $copay = (float)($_POST['patient_copay_amount'] ?? 0.00);
+        $remarks = clean_input($_POST['remarks'] ?? '');
+
+        $cCount = $db->query("SELECT COALESCE(MAX(id), 0) FROM `insurance_claims`")->fetchColumn();
+        $claimNum = 'CLM-' . date('Y') . '-' . str_pad((string)($cCount + 1), 4, '0', STR_PAD_LEFT);
+
+        $stmt = $db->prepare("
+            INSERT INTO `insurance_claims` 
+            (`claim_number`, `bill_id`, `patient_id`, `company_id`, `policy_number`, `pre_auth_code`, `claim_amount`, `patient_copay_amount`, `status`, `remarks`, `submitted_at`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Submitted', ?, NOW())
+        ");
+        $stmt->execute([$claimNum, $billId, $patientId, $companyId, $policyNum, $preAuth, $claimAmt, $copay, $remarks]);
+
+        AuditLogger::log('CREATE', 'insurance_claims', $db->lastInsertId(), null, ['claim' => $claimNum, 'amount' => $claimAmt]);
+        set_flash('success', "Insurance claim ($claimNum) submitted to panel.");
+        header("Location: index.php?page=insurance");
+        exit;
+    }
+
+    // Insurance Claim Update & Settlement Action
+    if ($action === 'insurance_claim_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'cashier']);
+
+        $claimId = (int)($_POST['claim_id'] ?? 0);
+        $status = clean_input($_POST['status'] ?? 'Approved');
+        $approvedAmt = (float)($_POST['approved_amount'] ?? 0.00);
+        $ref = clean_input($_POST['settlement_ref'] ?? '');
+
+        $claim = $db->query("SELECT * FROM `insurance_claims` WHERE `id` = $claimId")->fetch(PDO::FETCH_ASSOC);
+
+        if ($claim) {
+            $db->prepare("UPDATE `insurance_claims` SET `status` = ?, `approved_amount` = ? WHERE `id` = ?")
+               ->execute([$status, $approvedAmt, $claimId]);
+
+            // If Settled, credit bill payment
+            if ($status === 'Settled' && $approvedAmt > 0) {
+                $billId = $claim['bill_id'];
+                $payCount = $db->query("SELECT COALESCE(MAX(id), 0) FROM `payments`")->fetchColumn();
+                $recNum = 'RCT-TPA-' . date('Y') . '-' . str_pad((string)($payCount + 1), 4, '0', STR_PAD_LEFT);
+
+                $pStmt = $db->prepare("
+                    INSERT INTO `payments` (`receipt_number`, `bill_id`, `amount_paid`, `payment_method`, `transaction_reference`, `received_by`)
+                    VALUES (?, ?, ?, 'Insurance_TPA', ?, ?)
+                ");
+                $pStmt->execute([$recNum, $billId, $approvedAmt, $ref, Auth::id()]);
+
+                // Update bill balance
+                $db->prepare("
+                    UPDATE `bills` 
+                    SET `paid_amount` = `paid_amount` + ?,
+                        `balance_amount` = GREATEST(0, `balance_amount` - ?),
+                        `payment_status` = CASE WHEN (`balance_amount` - ?) <= 0 THEN 'Fully-Paid' ELSE 'Partially-Paid' END
+                    WHERE `id` = ?
+                ")->execute([$approvedAmt, $approvedAmt, $approvedAmt, $billId]);
+            }
+
+            AuditLogger::log('UPDATE', 'insurance_claims', $claimId, null, ['status' => $status, 'approved' => $approvedAmt]);
+            set_flash('success', "Insurance Claim {$claim['claim_number']} updated to $status.");
+        }
+        header("Location: index.php?page=insurance");
+        exit;
+    }
+
+    // Inventory Item Store Action
+    if ($action === 'inventory_item_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist']);
+
+        $name = clean_input($_POST['item_name'] ?? '');
+        $code = clean_input($_POST['item_code'] ?? '');
+        $catId = (int)($_POST['category_id'] ?? 1);
+        $uom = clean_input($_POST['unit_of_measure'] ?? 'Box');
+        $stock = (int)($_POST['current_stock'] ?? 0);
+        $reorder = (int)($_POST['reorder_level'] ?? 20);
+        $cost = (float)($_POST['unit_cost_price'] ?? 0.00);
+
+        $stmt = $db->prepare("
+            INSERT INTO `inventory_items` (`category_id`, `item_name`, `item_code`, `unit_of_measure`, `current_stock`, `reorder_level`, `unit_cost_price`)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([$catId, $name, $code, $uom, $stock, $reorder, $cost]);
+
+        AuditLogger::log('CREATE', 'inventory_items', $db->lastInsertId(), null, ['name' => $name, 'code' => $code]);
+        set_flash('success', "Consumable item '$name' ($code) added to catalog.");
+        header("Location: index.php?page=inventory&tab=stock");
+        exit;
+    }
+
+    // Supplier Store Action
+    if ($action === 'supplier_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist']);
+
+        $name = clean_input($_POST['supplier_name'] ?? '');
+        $code = clean_input($_POST['code'] ?? '');
+        $phone = clean_input($_POST['phone'] ?? '');
+        $person = clean_input($_POST['contact_person'] ?? '');
+        $email = clean_input($_POST['email'] ?? '');
+        $address = clean_input($_POST['address'] ?? '');
+
+        $stmt = $db->prepare("
+            INSERT INTO `suppliers` (`supplier_name`, `code`, `contact_person`, `phone`, `email`, `address`)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([$name, $code, $person, $phone, $email, $address]);
+
+        AuditLogger::log('CREATE', 'suppliers', $db->lastInsertId(), null, ['name' => $name, 'code' => $code]);
+        set_flash('success', "Vendor '$name' registered successfully.");
+        header("Location: index.php?page=inventory&tab=suppliers");
+        exit;
+    }
+
+    // Purchase Order Store Action
+    if ($action === 'po_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist']);
+
+        $supplierId = (int)($_POST['supplier_id'] ?? 0);
+        $delDate = !empty($_POST['expected_delivery_date']) ? clean_input($_POST['expected_delivery_date']) : null;
+        $itemName = clean_input($_POST['item_name'] ?? 'Consumables');
+        $qty = (int)($_POST['quantity'] ?? 1);
+        $unitPrice = (float)($_POST['unit_price'] ?? 0.00);
+        $totalAmt = $qty * $unitPrice;
+
+        $poCount = $db->query("SELECT COALESCE(MAX(id), 0) FROM `purchase_orders`")->fetchColumn();
+        $poNum = 'PO-' . date('Y') . '-' . str_pad((string)($poCount + 1), 4, '0', STR_PAD_LEFT);
+
+        try {
+            $db->beginTransaction();
+
+            $poStmt = $db->prepare("
+                INSERT INTO `purchase_orders` (`po_number`, `supplier_id`, `order_date`, `expected_delivery_date`, `total_amount`, `status`, `created_by`)
+                VALUES (?, ?, CURDATE(), ?, ?, 'Approved', ?)
+            ");
+            $poStmt->execute([$poNum, $supplierId, $delDate, $totalAmt, Auth::id()]);
+            $poId = (int)$db->lastInsertId();
+
+            $itemStmt = $db->prepare("
+                INSERT INTO `purchase_order_items` (`po_id`, `item_name`, `quantity`, `unit_price`, `total_price`)
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            $itemStmt->execute([$poId, $itemName, $qty, $unitPrice, $totalAmt]);
+
+            AuditLogger::log('CREATE', 'purchase_orders', $poId, null, ['po' => $poNum, 'amount' => $totalAmt]);
+            $db->commit();
+
+            set_flash('success', "Purchase Order ($poNum) issued for " . format_currency($totalAmt));
+            header("Location: index.php?page=inventory&tab=pos");
+            exit;
+        } catch (Exception $e) {
+            $db->rollBack();
+            set_flash('danger', "Failed to issue PO: " . $e->getMessage());
+            header("Location: index.php?page=inventory&tab=pos");
+            exit;
+        }
+    }
+
+    // Purchase Order Receive (GRN) Action
+    if ($action === 'po_receive' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist']);
+
+        $poId = (int)($_POST['po_id'] ?? 0);
+
+        try {
+            $db->beginTransaction();
+
+            $poItems = $db->query("SELECT * FROM `purchase_order_items` WHERE `po_id` = $poId")->fetchAll(PDO::FETCH_ASSOC);
+
+            foreach ($poItems as $pItem) {
+                // Increment inventory stock
+                $db->prepare("
+                    UPDATE `inventory_items` 
+                    SET `current_stock` = `current_stock` + ? 
+                    WHERE `item_name` = ?
+                ")->execute([(int)$pItem['quantity'], $pItem['item_name']]);
+            }
+
+            $db->prepare("UPDATE `purchase_orders` SET `status` = 'Received' WHERE `id` = ?")->execute([$poId]);
+
+            AuditLogger::log('UPDATE', 'purchase_orders', $poId, null, ['status' => 'Received']);
+            $db->commit();
+
+            set_flash('success', "Goods Receipt Note (GRN) processed. Warehouse stock updated.");
+            header("Location: index.php?page=inventory&tab=pos");
+            exit;
+        } catch (Exception $e) {
+            $db->rollBack();
+            set_flash('danger', "Failed to receive goods: " . $e->getMessage());
+            header("Location: index.php?page=inventory&tab=pos");
+            exit;
+        }
+    }
+
     // Default fallback if action unknown
     header("Location: index.php?page=dashboard");
     exit;
@@ -882,11 +1510,17 @@ $routes = [
     'patient_create' => ['file' => 'views/patients/create.php', 'title' => 'Patient Registration'],
     'patient_profile' => ['file' => 'views/patients/view.php', 'title' => 'Patient 360° Comprehensive Profile'],
     'appointments' => ['file' => 'views/appointments/index.php', 'title' => 'Appointments & Token Scheduling'],
+    'emergency' => ['file' => 'views/emergency/index.php', 'title' => 'Emergency & Trauma Care (ER)'],
     'opd_consultation' => ['file' => 'views/opd/consultation.php', 'title' => 'Clinician Workbench (OPD)'],
     'ipd_beds' => ['file' => 'views/ipd/beds.php', 'title' => 'Wards & Interactive Bed Rack (IPD)'],
+    'ot' => ['file' => 'views/ot/index.php', 'title' => 'Operation Theatre (OT) Suites'],
     'pharmacy' => ['file' => 'views/pharmacy/index.php', 'title' => 'Pharmacy & Dispensing Counter'],
     'laboratory' => ['file' => 'views/laboratory/index.php', 'title' => 'Clinical Pathology & Laboratory'],
+    'radiology' => ['file' => 'views/radiology/index.php', 'title' => 'Radiology PACS & Imaging'],
+    'blood_bank' => ['file' => 'views/blood_bank/index.php', 'title' => 'Blood Bank & Transfusion Medicine'],
     'billing' => ['file' => 'views/billing/index.php', 'title' => 'Centralized Billing & Cashier Desk'],
+    'insurance' => ['file' => 'views/insurance/index.php', 'title' => 'Insurance & Corporate TPA Claims'],
+    'inventory' => ['file' => 'views/inventory/index.php', 'title' => 'Central Inventory & Procurement'],
     'reports' => ['file' => 'views/reports/index.php', 'title' => 'Reports & Operational Analytics'],
     'settings' => ['file' => 'views/admin/settings.php', 'title' => 'Hospital Masters & Dynamic Settings'],
     'users' => ['file' => 'views/admin/users.php', 'title' => 'Hospital Staff & System Accounts'],

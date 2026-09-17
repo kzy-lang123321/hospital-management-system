@@ -52,6 +52,13 @@ function nav_active(string $pageName, string $currentPage): string {
                 <?php endif; ?>
 
                 <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'doctor', 'nurse', 'receptionist'])): ?>
+                <a href="index.php?page=emergency" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('emergency', $currentPage) ?>">
+                    <i class="fa-solid fa-truck-medical w-5 text-center text-red-400"></i>
+                    <span>Emergency & ER</span>
+                </a>
+                <?php endif; ?>
+
+                <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'doctor', 'nurse', 'receptionist'])): ?>
                 <a href="index.php?page=opd_consultation" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('opd_consultation', $currentPage) ?>">
                     <i class="fa-solid fa-stethoscope w-5 text-center"></i>
                     <span>OPD Consultation</span>
@@ -62,6 +69,13 @@ function nav_active(string $pageName, string $currentPage): string {
                 <a href="index.php?page=ipd_beds" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('ipd_beds', $currentPage) ?>">
                     <i class="fa-solid fa-bed-pulse w-5 text-center"></i>
                     <span>Wards & Bed Rack</span>
+                </a>
+                <?php endif; ?>
+
+                <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'doctor', 'nurse'])): ?>
+                <a href="index.php?page=ot" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('ot', $currentPage) ?>">
+                    <i class="fa-solid fa-syringe w-5 text-center text-teal-400"></i>
+                    <span>Operation Theatre (OT)</span>
                 </a>
                 <?php endif; ?>
             </nav>
@@ -84,17 +98,45 @@ function nav_active(string $pageName, string $currentPage): string {
                     <span>Laboratory & Tests</span>
                 </a>
                 <?php endif; ?>
+
+                <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'doctor', 'lab_technician', 'nurse'])): ?>
+                <a href="index.php?page=radiology" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('radiology', $currentPage) ?>">
+                    <i class="fa-solid fa-x-ray w-5 text-center text-indigo-400"></i>
+                    <span>Radiology & PACS</span>
+                </a>
+                <?php endif; ?>
+
+                <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'doctor', 'lab_technician', 'nurse'])): ?>
+                <a href="index.php?page=blood_bank" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('blood_bank', $currentPage) ?>">
+                    <i class="fa-solid fa-droplet w-5 text-center text-rose-400"></i>
+                    <span>Blood Bank</span>
+                </a>
+                <?php endif; ?>
             </nav>
         </div>
 
         <!-- Financial & Operations -->
         <div>
-            <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">Revenue & Analytics</div>
+            <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">Revenue & Operations</div>
             <nav class="space-y-1">
                 <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'cashier'])): ?>
                 <a href="index.php?page=billing" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('billing', $currentPage) ?>">
                     <i class="fa-solid fa-cash-register w-5 text-center"></i>
                     <span>Billing & Cashier</span>
+                </a>
+                <?php endif; ?>
+
+                <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'cashier', 'receptionist'])): ?>
+                <a href="index.php?page=insurance" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('insurance', $currentPage) ?>">
+                    <i class="fa-solid fa-file-shield w-5 text-center text-sky-400"></i>
+                    <span>Insurance / TPA</span>
+                </a>
+                <?php endif; ?>
+
+                <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'pharmacist'])): ?>
+                <a href="index.php?page=inventory" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('inventory', $currentPage) ?>">
+                    <i class="fa-solid fa-boxes-packing w-5 text-center text-amber-400"></i>
+                    <span>Central Stores</span>
                 </a>
                 <?php endif; ?>
 

@@ -28,14 +28,25 @@ TRUNCATE TABLE `consultation_notes`;
 TRUNCATE TABLE `clinical_vitals`;
 TRUNCATE TABLE `appointments`;
 TRUNCATE TABLE `encounters`;
+TRUNCATE TABLE `surgical_records`;
+TRUNCATE TABLE `surgery_bookings`;
+TRUNCATE TABLE `radiology_reports`;
+TRUNCATE TABLE `radiology_orders`;
+TRUNCATE TABLE `blood_requests`;
+TRUNCATE TABLE `insurance_claims`;
+TRUNCATE TABLE `purchase_order_items`;
+TRUNCATE TABLE `purchase_orders`;
 TRUNCATE TABLE `patient_allergies`;
 TRUNCATE TABLE `patients`;
 
--- 2. Reset all beds to Available and clear any encounter linkage
+-- 2. Reset operational statuses
 UPDATE `beds` SET `status` = 'Available', `current_encounter_id` = NULL;
+UPDATE `ot_rooms` SET `status` = 'Available';
+UPDATE `blood_units` SET `status` = 'Available';
 
--- 3. Reset drug batch quantities to full initial capacity
+-- 3. Reset drug batches and inventory quantities
 UPDATE `drug_batches` SET `current_quantity` = `initial_quantity`, `status` = 'Active';
+UPDATE `inventory_items` SET `current_stock` = 100 WHERE `id` = 1;
 
 -- 4. Clean audit logs of test runs, add initial system initialization entry
 TRUNCATE TABLE `audit_logs`;
