@@ -1,0 +1,15 @@
+# Environment & Sensitive Files
+.env
+*.log
+tmp/
+temp/
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Testing Temporary Artifacts
+*cookie*
