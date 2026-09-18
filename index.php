@@ -2039,6 +2039,7 @@ if ($action !== null) {
 
             $customerType = clean_input($_POST['customer_type'] ?? 'walk_in');
             $patientId = !empty($_POST['patient_id']) ? (int)$_POST['patient_id'] : null;
+            $prescriptionId = !empty($_POST['prescription_id']) ? (int)$_POST['prescription_id'] : null;
             $customerName = clean_input($_POST['customer_name'] ?? '');
             $customerPhone = clean_input($_POST['customer_phone'] ?? '');
             $paymentMethod = clean_input($_POST['payment_method'] ?? 'Cash');
@@ -2051,6 +2052,7 @@ if ($action !== null) {
             $itemBatches = $_POST['item_batch_id'] ?? [];
             $itemQuantities = $_POST['item_quantity'] ?? [];
             $itemPrices = $_POST['item_unit_price'] ?? [];
+            $itemInstructions = $_POST['item_dosage_instructions'] ?? [];
 
             if (empty($itemBatches) || !is_array($itemBatches)) {
                 throw new Exception("Please add at least one medication item to the POS cart.");
@@ -2092,6 +2094,7 @@ if ($action !== null) {
                 $batchId = (int)$batchId;
                 $qty = (int)($itemQuantities[$idx] ?? 0);
                 $unitPrice = (float)($itemPrices[$idx] ?? 0.00);
+                $instructions = clean_input($itemInstructions[$idx] ?? 'As directed by physician');
 
                 if ($batchId <= 0 || $qty <= 0) {
                     continue;
@@ -2144,7 +2147,8 @@ if ($action !== null) {
                     'expiry_date' => $batch['expiry_date'],
                     'quantity' => $qty,
                     'unit_price' => $unitPrice,
-                    'total_price' => $lineTotal
+                    'total_price' => $lineTotal,
+                    'dosage_instructions' => $instructions
                 ];
             }
 
@@ -2169,10 +2173,11 @@ if ($action !== null) {
             $saleStmt = $db->prepare("
                 INSERT INTO `pharmacy_sales`
                 (`sale_invoice_number`, `prescription_id`, `encounter_id`, `patient_id`, `customer_name`, `customer_phone`, `subtotal`, `discount_amount`, `tax_amount`, `net_total`, `amount_tendered`, `change_amount`, `payment_method`, `payment_reference`, `sale_notes`, `dispensed_by`, `created_at`)
-                VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ");
             $saleStmt->execute([
                 $saleInvoiceNum,
+                $prescriptionId,
                 $activeEncounterId,
                 $patientId,
                 $customerName,
@@ -2190,13 +2195,18 @@ if ($action !== null) {
             ]);
             $saleId = (int)$db->lastInsertId();
 
-            // Insert items into pharmacy_sale_items
+            // Insert items into pharmacy_sale_items with dosage_instructions
             $psiStmt = $db->prepare("
-                INSERT INTO `pharmacy_sale_items` (`pharmacy_sale_id`, `drug_batch_id`, `quantity`, `unit_price`, `total_price`)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO `pharmacy_sale_items` (`pharmacy_sale_id`, `drug_batch_id`, `quantity`, `unit_price`, `total_price`, `dosage_instructions`)
+                VALUES (?, ?, ?, ?, ?, ?)
             ");
             foreach ($itemsToInsert as $it) {
-                $psiStmt->execute([$saleId, $it['batch_id'], $it['quantity'], $it['unit_price'], $it['total_price']]);
+                $psiStmt->execute([$saleId, $it['batch_id'], $it['quantity'], $it['unit_price'], $it['total_price'], $it['dosage_instructions']]);
+            }
+
+            // If a doctor prescription was linked, mark as Dispensed
+            if ($prescriptionId > 0) {
+                $db->prepare("UPDATE `prescriptions` SET `status` = 'Dispensed' WHERE `id` = ?")->execute([$prescriptionId]);
             }
 
             // If registered patient with active encounter or bill-to-encounter selected:

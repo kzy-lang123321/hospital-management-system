@@ -253,14 +253,20 @@ $mode = $_GET['mode'] ?? 'thermal'; // 'thermal' (80mm) or 'standard' (A4)
             <tbody class="divide-y divide-slate-100">
                 <?php foreach ($items as $item): ?>
                 <tr>
-                    <td class="py-1 pr-1">
+                    <td class="py-1.5 pr-1">
                         <div class="font-bold text-slate-900"><?= htmlspecialchars($item['brand_name']) ?></div>
                         <div class="text-[9px] text-slate-500"><?= htmlspecialchars($item['dosage_form']) ?> &bull; <?= htmlspecialchars($item['strength']) ?></div>
                         <div class="text-[8px] font-mono text-slate-400">B:<?= htmlspecialchars($item['batch_number']) ?> Exp:<?= date('m/y', strtotime($item['expiry_date'])) ?></div>
+                        <?php if (!empty($item['dosage_instructions'])): ?>
+                        <div class="text-[9px] font-bold text-teal-800 bg-teal-50 px-1 py-0.5 rounded mt-0.5 border border-teal-200/60">
+                            <span class="text-[8px] uppercase tracking-wider text-teal-600 block">طریقہ استعمال / Instructions:</span>
+                            <?= htmlspecialchars($item['dosage_instructions']) ?>
+                        </div>
+                        <?php endif; ?>
                     </td>
-                    <td class="py-1 text-center font-mono font-bold align-top"><?= (int)$item['quantity'] ?></td>
-                    <td class="py-1 text-right font-mono align-top"><?= number_format($item['unit_price'], 2) ?></td>
-                    <td class="py-1 text-right font-mono font-bold align-top"><?= number_format($item['total_price'], 2) ?></td>
+                    <td class="py-1.5 text-center font-mono font-bold align-top"><?= (int)$item['quantity'] ?></td>
+                    <td class="py-1.5 text-right font-mono align-top"><?= number_format($item['unit_price'], 2) ?></td>
+                    <td class="py-1.5 text-right font-mono font-bold align-top"><?= number_format($item['total_price'], 2) ?></td>
                 </tr>
                 <?php endforeach; ?>
             </tbody>
@@ -423,6 +429,12 @@ $mode = $_GET['mode'] ?? 'thermal'; // 'thermal' (80mm) or 'standard' (A4)
                         <td class="px-4 py-3">
                             <strong class="text-slate-800 font-bold"><?= htmlspecialchars($item['brand_name']) ?></strong>
                             <div class="text-[11px] text-slate-500"><?= htmlspecialchars($item['generic_name']) ?> &bull; <?= htmlspecialchars($item['dosage_form']) ?> (<?= htmlspecialchars($item['strength']) ?>)</div>
+                            <?php if (!empty($item['dosage_instructions'])): ?>
+                            <div class="text-[11px] font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded mt-1 border border-teal-200">
+                                <span class="text-[9px] uppercase tracking-wider text-teal-700 block">طریقہ استعمال / Patient Instructions:</span>
+                                <?= htmlspecialchars($item['dosage_instructions']) ?>
+                            </div>
+                            <?php endif; ?>
                         </td>
                         <td class="px-4 py-3 font-mono text-[11px]">
                             <span class="bg-slate-100 px-1.5 py-0.5 rounded font-bold text-slate-700"><?= htmlspecialchars($item['batch_number']) ?></span>

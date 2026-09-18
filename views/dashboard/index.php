@@ -129,6 +129,76 @@ $recentPosSales = $db->query("
     ORDER BY ps.id DESC
     LIMIT 6
 ")->fetchAll(PDO::FETCH_ASSOC);
+
+// 8. Pending OPD Prescriptions for 1-Click Fast Loading into POS
+$pendingPrescriptionsList = $db->query("
+    SELECT 
+        pr.id AS prescription_id,
+        pr.prescription_number,
+        pr.encounter_id,
+        pr.created_at,
+        p.id AS patient_id,
+        p.mrn,
+        p.first_name,
+        p.last_name,
+        p.phone_primary,
+        p.gender,
+        p.age,
+        doc.full_name AS doctor_name,
+        (SELECT COUNT(*) FROM `prescription_items` pi WHERE pi.prescription_id = pr.id) AS item_count
+    FROM `prescriptions` pr
+    JOIN `encounters` e ON pr.encounter_id = e.id
+    JOIN `patients` p ON e.patient_id = p.id
+    JOIN `users` doc ON pr.doctor_id = doc.id
+    WHERE pr.status = 'Pending'
+    ORDER BY pr.id DESC
+    LIMIT 25
+")->fetchAll(PDO::FETCH_ASSOC);
+
+$pendingRxItemsMap = [];
+if (!empty($pendingPrescriptionsList)) {
+    $rxIds = array_column($pendingPrescriptionsList, 'prescription_id');
+    $inClause = implode(',', array_map('intval', $rxIds));
+    $itemsRaw = $db->query("
+        SELECT 
+            pi.prescription_id,
+            pi.drug_item_id,
+            pi.dosage,
+            pi.frequency,
+            pi.instructions,
+            pi.quantity_prescribed,
+            di.brand_name,
+            di.generic_name,
+            di.dosage_form,
+            di.strength,
+            di.is_controlled_substance,
+            di.narcotic_schedule,
+            (SELECT db.id FROM `drug_batches` db WHERE db.drug_item_id = di.id AND db.status = 'Active' AND db.current_quantity > 0 ORDER BY db.expiry_date ASC, db.id ASC LIMIT 1) AS matched_batch_id,
+            (SELECT db.batch_number FROM `drug_batches` db WHERE db.drug_item_id = di.id AND db.status = 'Active' AND db.current_quantity > 0 ORDER BY db.expiry_date ASC, db.id ASC LIMIT 1) AS matched_batch_number,
+            (SELECT db.expiry_date FROM `drug_batches` db WHERE db.drug_item_id = di.id AND db.status = 'Active' AND db.current_quantity > 0 ORDER BY db.expiry_date ASC, db.id ASC LIMIT 1) AS matched_expiry_date,
+            (SELECT db.unit_sale_price FROM `drug_batches` db WHERE db.drug_item_id = di.id AND db.status = 'Active' AND db.current_quantity > 0 ORDER BY db.expiry_date ASC, db.id ASC LIMIT 1) AS matched_price,
+            (SELECT db.current_quantity FROM `drug_batches` db WHERE db.drug_item_id = di.id AND db.status = 'Active' AND db.current_quantity > 0 ORDER BY db.expiry_date ASC, db.id ASC LIMIT 1) AS matched_stock
+        FROM `prescription_items` pi
+        JOIN `drug_items` di ON pi.drug_item_id = di.id
+        WHERE pi.prescription_id IN ($inClause)
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($itemsRaw as $row) {
+        $pendingRxItemsMap[$row['prescription_id']][] = $row;
+    }
+}
+
+// 9. Quick-Tap Fast-Moving Essential OTC & Routine Medicines for Local Patients
+$quickMeds = [];
+$popularKeywords = ['Panadol', 'Augmentin', 'Risek', 'Brufen', 'Loprin', 'Glucophage', 'Norvasc', 'Ventolin', 'Saline'];
+foreach ($popularKeywords as $kw) {
+    foreach ($posDrugBatches as $b) {
+        if (stripos($b['brand_name'], $kw) !== false) {
+            $quickMeds[] = $b;
+            break;
+        }
+    }
+}
 ?>
 
 <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
@@ -282,6 +352,514 @@ $recentPosSales = $db->query("
 
     </div>
 
+    <!-- ========================================================================= -->
+    <!-- FLAGSHIP DASHBOARD POINT OF SALE (POS) & OUTPATIENT DISPENSARY CENTERPIECE -->
+    <!-- ========================================================================= -->
+    <div id="dashboard-pos" class="bg-white rounded-2xl border-2 border-emerald-500/30 shadow-xl overflow-hidden scroll-mt-6 transition-all duration-300">
+        
+        <!-- POS Terminal Header Banner -->
+        <div class="bg-gradient-to-r from-emerald-800 via-teal-800 to-navy-900 text-white p-5 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <div class="flex items-center gap-2 mb-1.5">
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-400/20 text-emerald-300 border border-emerald-400/30 uppercase tracking-wider">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block"></span>
+                        LIVE DISPENSARY TERMINAL
+                    </span>
+                    <span class="text-xs text-emerald-200/80 font-mono hidden sm:inline">&bull; Terminal #01 (Main Lobby)</span>
+                </div>
+                <h3 class="text-xl sm:text-2xl font-black tracking-tight flex items-center gap-2.5">
+                    <i class="fa-solid fa-cash-register text-emerald-400"></i>
+                    <span>Point of Sale (POS) &amp; Outpatient Dispensary</span>
+                </h3>
+                <p class="text-xs sm:text-sm text-emerald-100/80 mt-1 max-w-2xl">
+                    Fast-track counter checkout for walk-in patients and OPD prescriptions &bull; Real-time FEFO stock deductions &bull; Bilingual dosage directions (طریقہ استعمال) &bull; 80mm thermal &amp; A4 invoicing
+                </p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 self-start md:self-center">
+                <div class="bg-black/30 border border-white/10 rounded-xl px-3 py-2 text-right">
+                    <div class="text-[10px] text-emerald-200 uppercase font-semibold">Active Cashier</div>
+                    <div class="text-xs font-bold text-white"><?= htmlspecialchars($currentUser['full_name']) ?></div>
+                </div>
+                <div class="bg-black/30 border border-white/10 rounded-xl px-3.5 py-2 text-center">
+                    <div class="text-[10px] text-emerald-200 uppercase font-semibold">Live Clock</div>
+                    <div id="pos-live-clock" class="font-mono font-black text-sm text-emerald-300">--:--:--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Fast-Moving Essentials Quick-Tap Bar (Popular OTC Routine Medications) -->
+        <?php if (!empty($quickMeds)): ?>
+        <div class="bg-emerald-50/80 border-b border-emerald-100 px-5 py-3 flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <span class="w-6 h-6 rounded-md bg-amber-500 text-white flex items-center justify-center text-xs shadow-2xs">
+                    <i class="fa-solid fa-bolt"></i>
+                </span>
+                <span class="text-xs font-bold text-slate-800 uppercase tracking-wide">Quick-Tap OTC Essentials:</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 flex-1">
+                <?php foreach ($quickMeds as $qm): ?>
+                <button type="button" 
+                        onclick="addQuickMed(<?= (int)$qm['batch_id'] ?>, '<?= htmlspecialchars(addslashes($qm['brand_name'])) ?>', <?= (float)$qm['unit_sale_price'] ?>, '<?= htmlspecialchars(addslashes($qm['dosage_form'] . ' ' . $qm['strength'])) ?>', '<?= htmlspecialchars(addslashes($qm['batch_number'])) ?>', '<?= htmlspecialchars(addslashes($qm['expiry_date'])) ?>', <?= (int)$qm['current_quantity'] ?>)"
+                        class="px-2.5 py-1 bg-white hover:bg-emerald-600 hover:text-white text-slate-700 border border-emerald-200 hover:border-emerald-600 rounded-lg text-xs font-semibold shadow-2xs transition-all flex items-center gap-1.5 group"
+                        title="Click to instantly add 1 unit of <?= htmlspecialchars($qm['brand_name']) ?> to cart">
+                    <span>💊 <?= htmlspecialchars($qm['brand_name']) ?></span>
+                    <span class="text-[10px] text-slate-400 group-hover:text-emerald-100 font-normal"><?= htmlspecialchars($qm['strength']) ?></span>
+                    <span class="text-[10px] font-mono font-bold text-emerald-700 group-hover:text-white bg-emerald-100 group-hover:bg-emerald-700/50 px-1.5 py-0.5 rounded">Rs. <?= number_format($qm['unit_sale_price'], 2) ?></span>
+                    <span class="text-[9px] text-slate-400 group-hover:text-emerald-200 font-mono">(<?= $qm['current_quantity'] ?>)</span>
+                </button>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Doctor OPD Prescription Fast Loader -->
+        <div class="bg-slate-50 border-b border-slate-200 px-5 py-3 flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <div class="w-6 h-6 rounded-md bg-teal-600 text-white flex items-center justify-center text-xs shadow-2xs">
+                    <i class="fa-solid fa-file-prescription"></i>
+                </div>
+                <div>
+                    <span class="text-xs font-bold text-slate-800">Load Doctor OPD Prescription (نسخہ لوڈ کریں):</span>
+                    <span class="text-[11px] text-slate-500 hidden lg:inline">&bull; 1-Click auto-populate cart with prescribed FEFO drugs &amp; dosage directions</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 flex-1 max-w-2xl">
+                <select id="pos_load_rx_select" class="w-full text-xs border border-slate-300 rounded-lg py-1.5 px-3 bg-white focus:ring-2 focus:ring-teal-500 font-medium">
+                    <option value="">-- Select Pending Doctor OPD Prescription to Auto-fill Cart (<?= count($pendingPrescriptionsList) ?> Available) --</option>
+                    <?php foreach ($pendingPrescriptionsList as $prx): ?>
+                    <option value="<?= $prx['prescription_id'] ?>">
+                        [<?= htmlspecialchars($prx['prescription_number']) ?>] <?= htmlspecialchars($prx['first_name'] . ' ' . $prx['last_name']) ?> (MRN: <?= htmlspecialchars($prx['mrn']) ?>) &bull; <?= $prx['item_count'] ?> Meds (Dr. <?= htmlspecialchars($prx['doctor_name']) ?>)
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+                <button type="button" onclick="triggerLoadRx()" class="px-3.5 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold shadow-2xs transition-colors flex items-center gap-1.5 flex-shrink-0">
+                    <i class="fa-solid fa-arrow-down-to-bracket"></i>
+                    <span>Load Rx</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Dynamic Feedback Alert for Loaded Prescription -->
+        <div id="pos-rx-loaded-alert" class="hidden bg-teal-50 border-b border-teal-200 px-5 py-2.5 flex items-center justify-between text-xs text-teal-900">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-circle-check text-teal-600 text-sm"></i>
+                <span id="pos-rx-loaded-text">Prescription loaded successfully.</span>
+            </div>
+            <button type="button" onclick="document.getElementById('pos-rx-loaded-alert').classList.add('hidden')" class="text-teal-700 hover:text-teal-900 font-bold text-xs">&times;</button>
+        </div>
+
+        <!-- POS Checkout Form -->
+        <form id="pos-sale-form" action="index.php?action=pos_sale_checkout" method="POST" onsubmit="return validatePosCheckout(event)">
+            <input type="hidden" name="prescription_id" id="pos_loaded_prescription_id" value="">
+
+            <div class="p-5 sm:p-6 grid grid-cols-1 xl:grid-cols-12 gap-6">
+
+                <!-- LEFT SIDE (7 Cols): Patient, Drug Selector & Live Cart Table -->
+                <div class="xl:col-span-7 space-y-5">
+
+                    <!-- Section 1: Patient / Customer Details -->
+                    <div class="bg-slate-50/70 p-4 rounded-xl border border-slate-200">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                            <label class="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+                                <i class="fa-solid fa-user-tag text-medical-600"></i>
+                                <span>1. Customer / Patient Mode</span>
+                            </label>
+                            <!-- Segmented Switcher -->
+                            <div class="inline-flex rounded-lg border border-slate-300 p-0.5 bg-white shadow-2xs">
+                                <label class="cursor-pointer">
+                                    <input type="radio" name="customer_type" value="walk_in" checked onchange="toggleCustomerType('walk_in')" class="sr-only peer">
+                                    <span class="px-3 py-1 text-xs font-semibold rounded-md inline-flex items-center gap-1 text-slate-600 peer-checked:bg-medical-600 peer-checked:text-white transition-all">
+                                        <i class="fa-solid fa-person-walking"></i>
+                                        <span>Walk-in / Local Counter</span>
+                                    </span>
+                                </label>
+                                <label class="cursor-pointer">
+                                    <input type="radio" name="customer_type" value="registered" onchange="toggleCustomerType('registered')" class="sr-only peer">
+                                    <span class="px-3 py-1 text-xs font-semibold rounded-md inline-flex items-center gap-1 text-slate-600 peer-checked:bg-medical-600 peer-checked:text-white transition-all">
+                                        <i class="fa-solid fa-hospital-user"></i>
+                                        <span>Registered Hospital Patient</span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Walk-in Customer Form -->
+                        <div id="pos-walkin-fields" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-[11px] font-semibold text-slate-600 mb-1">Customer / Patient Name *</label>
+                                <input type="text" name="customer_name" id="pos_customer_name" value="Walk-in Customer" required
+                                       class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-medical-500 font-medium">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-semibold text-slate-600 mb-1">Customer Contact Phone (Optional)</label>
+                                <input type="text" name="customer_phone" id="pos_customer_phone" placeholder="e.g. 0300-1234567"
+                                       class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-medical-500 font-medium">
+                            </div>
+                        </div>
+
+                        <!-- Registered Patient Selector (Hidden by Default) -->
+                        <div id="pos-registered-fields" class="hidden space-y-2">
+                            <!-- Real-time Patient Filter Input -->
+                            <div>
+                                <label class="block text-[11px] font-semibold text-slate-600 mb-1">Quick Search Registered Patient</label>
+                                <div class="relative">
+                                    <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                        <i class="fa-solid fa-magnifying-glass text-xs"></i>
+                                    </span>
+                                    <input type="text" id="pos_patient_search" placeholder="Type Name, MRN or Phone to live filter patients..." oninput="filterPosPatients(this.value)"
+                                           class="w-full text-xs border border-slate-300 rounded-lg pl-8 pr-3 py-1.5 bg-white focus:ring-2 focus:ring-teal-500">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-semibold text-slate-600 mb-1">Select Patient File *</label>
+                                <select name="patient_id" id="pos_patient_id" onchange="onSelectRegisteredPatient(this)"
+                                        class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-medical-500 font-medium">
+                                    <option value="">-- Choose Registered Patient (<?= count($posPatients) ?> Available) --</option>
+                                    <?php foreach ($posPatients as $pat): ?>
+                                    <option value="<?= $pat['id'] ?>"
+                                            data-mrn="<?= htmlspecialchars($pat['mrn']) ?>"
+                                            data-name="<?= htmlspecialchars($pat['first_name'] . ' ' . $pat['last_name']) ?>"
+                                            data-phone="<?= htmlspecialchars($pat['phone_primary'] ?? '') ?>"
+                                            data-gender="<?= htmlspecialchars($pat['gender'] ?? '') ?>"
+                                            data-age="<?= htmlspecialchars((string)($pat['age'] ?? '')) ?>">
+                                        <?= htmlspecialchars($pat['first_name'] . ' ' . $pat['last_name']) ?> (MRN: <?= htmlspecialchars($pat['mrn']) ?>) &bull; Ph: <?= htmlspecialchars($pat['phone_primary'] ?? 'N/A') ?>
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <!-- Patient Quick Info Card -->
+                            <div id="pos-selected-pat-info" class="hidden p-2.5 bg-teal-50 border border-teal-200 rounded-lg text-xs text-teal-900 flex items-center justify-between">
+                                <span id="pos-pat-summary"></span>
+                                <span class="text-[10px] font-bold text-teal-700 uppercase bg-teal-200/60 px-2 py-0.5 rounded">Active File</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 2: Medication Formulary & Batch Picker -->
+                    <div class="bg-slate-50/70 p-4 rounded-xl border border-slate-200 space-y-3">
+                        <label class="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
+                            <i class="fa-solid fa-pills text-teal-600"></i>
+                            <span>2. Select Medication &amp; Batch (FEFO Ready)</span>
+                        </label>
+                        
+                        <div>
+                            <select id="pos_batch_selector" onchange="onPosBatchSelected(this)"
+                                    class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2.5 bg-white focus:ring-2 focus:ring-teal-500 font-medium">
+                                <option value="">-- Choose Medication from Formulary Stock (<?= count($posDrugBatches) ?> Batches) --</option>
+                                <?php foreach ($posDrugBatches as $b): ?>
+                                <option value="<?= $b['batch_id'] ?>"
+                                        data-brand="<?= htmlspecialchars($b['brand_name']) ?>"
+                                        data-generic="<?= htmlspecialchars($b['generic_name']) ?>"
+                                        data-dosage="<?= htmlspecialchars($b['dosage_form'] . ' ' . $b['strength']) ?>"
+                                        data-batch="<?= htmlspecialchars($b['batch_number']) ?>"
+                                        data-expiry="<?= htmlspecialchars($b['expiry_date']) ?>"
+                                        data-stock="<?= (int)$b['current_quantity'] ?>"
+                                        data-price="<?= (float)$b['unit_sale_price'] ?>"
+                                        data-controlled="<?= (int)$b['is_controlled_substance'] ?>"
+                                        data-schedule="<?= htmlspecialchars($b['narcotic_schedule'] ?? '') ?>">
+                                    <?= htmlspecialchars($b['brand_name']) ?> (<?= htmlspecialchars($b['dosage_form'] . ' ' . $b['strength']) ?>) &bull; Batch: <?= htmlspecialchars($b['batch_number']) ?> &bull; Exp: <?= htmlspecialchars($b['expiry_date']) ?> &bull; Rs. <?= number_format($b['unit_sale_price'], 2) ?> (Stock: <?= $b['current_quantity'] ?>)
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <!-- Item Detail Preview Box (Revealed on selection) -->
+                        <div id="pos-item-preview" class="hidden p-3 bg-white border border-teal-200 rounded-xl shadow-2xs space-y-2">
+                            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                                <div>
+                                    <span id="preview-brand" class="font-bold text-slate-900 text-sm"></span>
+                                    <span id="preview-generic" class="text-xs text-slate-500 ml-1"></span>
+                                </div>
+                                <div id="preview-controlled-badge"></div>
+                            </div>
+                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                                <div>
+                                    <span class="text-slate-400 block text-[10px]">Batch No</span>
+                                    <strong id="preview-batch" class="font-mono text-slate-700"></strong>
+                                </div>
+                                <div>
+                                    <span class="text-slate-400 block text-[10px]">Expiry</span>
+                                    <strong id="preview-expiry" class="font-mono text-slate-700"></strong>
+                                </div>
+                                <div>
+                                    <span class="text-slate-400 block text-[10px]">Available Stock</span>
+                                    <strong id="preview-stock" class="text-emerald-700 font-bold"></strong>
+                                </div>
+                                <div>
+                                    <span class="text-slate-400 block text-[10px]">Unit Retail Rate</span>
+                                    <strong id="preview-price" class="text-slate-900 font-mono font-bold"></strong>
+                                </div>
+                            </div>
+
+                            <!-- Row for Dosage Preset & Quantity before adding -->
+                            <div class="pt-2 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                                <div class="sm:col-span-5">
+                                    <label class="block text-[10px] font-bold text-slate-600 mb-0.5">طریقہ استعمال (Dosage Preset)</label>
+                                    <select id="pos_picker_dosage_preset" onchange="onPickerPresetChange(this.value)" class="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-slate-50 font-medium">
+                                        <option value="">-- منتخب کریں / Presets --</option>
+                                        <option value="1 صبح 1 شام کھانے کے بعد">1 صبح 1 شام کھانے کے بعد</option>
+                                        <option value="1 صبح نہار منہ">1 صبح نہار منہ</option>
+                                        <option value="1 صبح 1 دوپہر 1 شام کھانے کے بعد">1 صبح 1 دوپہر 1 شام کھانے کے بعد</option>
+                                        <option value="ایک چمچ دن میں 3 بار">ایک چمچ دن میں 3 بار</option>
+                                        <option value="1 گولی ضرورت پڑنے پر / درد میں">1 گولی ضرورت پڑنے پر / درد میں</option>
+                                        <option value="رات کو سوتے وقت 1 گولی">رات کو سوتے وقت 1 گولی</option>
+                                        <option value="حسب ہدایت معالج">حسب ہدایت معالج</option>
+                                    </select>
+                                </div>
+                                <div class="sm:col-span-4">
+                                    <label class="block text-[10px] font-bold text-slate-600 mb-0.5">Instructions / تفصیل</label>
+                                    <input type="text" id="pos_picker_instructions" placeholder="e.g. کھانے کے بعد" class="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5">
+                                </div>
+                                <div class="sm:col-span-3 flex items-end gap-2">
+                                    <div class="w-16">
+                                        <label class="block text-[10px] font-bold text-slate-600 mb-0.5">Qty</label>
+                                        <input type="number" id="pos_item_qty" value="1" min="1" class="w-full text-center text-xs font-bold font-mono border border-slate-300 rounded-lg px-2 py-1.5">
+                                    </div>
+                                    <button type="button" onclick="addSelectedToPosCart()" class="flex-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition-colors flex items-center justify-center gap-1">
+                                        <i class="fa-solid fa-cart-plus"></i>
+                                        <span>Add</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 3: Live Cart Items Table -->
+                    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                        <div class="px-4 py-3 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <i class="fa-solid fa-basket-shopping text-emerald-600 text-xs"></i>
+                                <h4 class="font-bold text-slate-800 text-xs uppercase tracking-wide">POS Billing Cart</h4>
+                            </div>
+                            <span id="pos-cart-badge" class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">0 Items</span>
+                        </div>
+
+                        <div class="overflow-x-auto max-h-[360px] custom-scrollbar">
+                            <table class="w-full text-left border-collapse text-xs">
+                                <thead>
+                                    <tr class="bg-slate-100/70 border-b border-slate-200 text-[11px] font-semibold text-slate-600">
+                                        <th class="px-3 py-2 w-8">#</th>
+                                        <th class="px-3 py-2">Medication &amp; Batch</th>
+                                        <th class="px-3 py-2 text-right w-20">Rate</th>
+                                        <th class="px-3 py-2 text-center w-28">Qty</th>
+                                        <th class="px-3 py-2 w-44">طریقہ استعمال / Instructions</th>
+                                        <th class="px-3 py-2 text-right w-24">Total</th>
+                                        <th class="px-2 py-2 text-center w-8"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pos-cart-tbody" class="divide-y divide-slate-100">
+                                    <tr id="pos-cart-empty">
+                                        <td colspan="7" class="px-4 py-10 text-center text-slate-400">
+                                            <div class="w-12 h-12 rounded-full bg-slate-100 mx-auto flex items-center justify-center text-slate-300 text-xl mb-2">
+                                                <i class="fa-solid fa-cart-shopping"></i>
+                                            </div>
+                                            <p class="font-medium text-xs text-slate-500">POS Cart is currently empty.</p>
+                                            <p class="text-[11px] text-slate-400 mt-0.5">Scan formulary items above, tap Quick-Tap essentials, or load an OPD prescription.</p>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- RIGHT SIDE (5 Cols): Billing Calculation, Payment Method, Tender Calculator & Checkout -->
+                <div class="xl:col-span-5 bg-slate-50/90 p-5 rounded-xl border border-slate-200 flex flex-col justify-between space-y-4">
+                    
+                    <div class="space-y-4">
+                        <div class="border-b border-slate-200 pb-3 flex items-center justify-between">
+                            <h4 class="font-black text-slate-800 text-sm uppercase tracking-wide flex items-center gap-1.5">
+                                <i class="fa-solid fa-calculator text-emerald-600"></i>
+                                <span>3. Billing Summary &amp; Checkout</span>
+                            </h4>
+                            <button type="button" onclick="resetPosCart()" class="text-[11px] text-slate-400 hover:text-rose-600 transition-colors flex items-center gap-1" title="Clear all cart items">
+                                <i class="fa-solid fa-rotate-left text-[10px]"></i>
+                                <span>Clear Cart</span>
+                            </button>
+                        </div>
+
+                        <!-- Subtotal, Discount & Tax Breakdown -->
+                        <div class="space-y-2 text-xs">
+                            <div class="flex items-center justify-between text-slate-600">
+                                <span>Cart Subtotal:</span>
+                                <span id="pos-subtotal-txt" class="font-mono font-bold text-slate-800">Rs. 0.00</span>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3 pt-1">
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-slate-600 mb-1">Discount (Rs.)</label>
+                                    <input type="number" name="discount_amount" id="pos_discount" value="0.00" min="0" step="0.5" oninput="recalcPosTotals()"
+                                           class="w-full text-xs font-mono font-semibold border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white text-right focus:ring-2 focus:ring-emerald-500">
+                                </div>
+                                <div>
+                                    <label class="block text-[11px] font-semibold text-slate-600 mb-1">Sales Tax / GST (Rs.)</label>
+                                    <input type="number" name="tax_amount" id="pos_tax" value="0.00" min="0" step="0.5" oninput="recalcPosTotals()"
+                                           class="w-full text-xs font-mono font-semibold border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white text-right focus:ring-2 focus:ring-emerald-500">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Grand Total Highlight Card -->
+                        <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-500/50 rounded-xl p-4 text-center shadow-xs">
+                            <span class="text-[11px] font-extrabold uppercase tracking-wider text-emerald-800">NET AMOUNT PAYABLE</span>
+                            <div id="pos-net-total-txt" class="text-3xl font-black font-mono text-emerald-700 mt-0.5">Rs. 0.00</div>
+                            <span class="text-[10px] text-emerald-600 font-medium">Includes all taxes &amp; discounts</span>
+                        </div>
+
+                        <!-- Payment Method Selector -->
+                        <div>
+                            <label class="block text-[11px] font-bold text-slate-700 mb-1.5">Payment Method *</label>
+                            <select name="payment_method" id="pos_payment_method" onchange="onPaymentMethodChange(this.value)"
+                                    class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500">
+                                <option value="Cash">💵 Cash Settlement (Default)</option>
+                                <option value="Card">💳 Debit / Credit Card</option>
+                                <option value="Bank_Transfer">🏦 Bank Wire / Online Transfer</option>
+                                <option value="Mobile_Wallet">📱 Mobile Wallet (Easypaisa / JazzCash)</option>
+                                <option value="Bill_to_Encounter" id="opt-bill-encounter" disabled>🏥 Bill to Hospital Encounter (Registered Patient)</option>
+                            </select>
+                        </div>
+
+                        <!-- Cash Settlement Calculator (Tendered & Change) -->
+                        <div id="pos-cash-details" class="bg-white p-3.5 rounded-xl border border-slate-200 space-y-2.5">
+                            <div class="flex items-center justify-between">
+                                <label class="text-[11px] font-bold text-slate-700">Cash Received / Tendered (Rs.)</label>
+                                <button type="button" onclick="setExactTender()" class="text-[10px] text-emerald-700 hover:underline font-bold">Exact</button>
+                            </div>
+                            <input type="number" name="amount_tendered" id="pos_amount_tendered" value="0.00" min="0" step="10" oninput="calcPosChange()"
+                                   class="w-full text-sm font-mono font-bold border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-right focus:ring-2 focus:ring-emerald-500">
+                            
+                            <!-- Quick Cash Buttons -->
+                            <div class="flex flex-wrap gap-1 pt-0.5">
+                                <button type="button" onclick="addTender(50)" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-mono font-bold">+50</button>
+                                <button type="button" onclick="addTender(100)" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-mono font-bold">+100</button>
+                                <button type="button" onclick="addTender(500)" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-mono font-bold">+500</button>
+                                <button type="button" onclick="addTender(1000)" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-mono font-bold">+1,000</button>
+                                <button type="button" onclick="addTender(5000)" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-mono font-bold">+5,000</button>
+                            </div>
+
+                            <!-- Change Display -->
+                            <div class="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                                <span class="text-slate-600 font-semibold">Change to Return:</span>
+                                <span id="pos-change-txt" class="font-mono text-sm text-slate-500 font-bold">Rs. 0.00</span>
+                            </div>
+                        </div>
+
+                        <!-- Reference Field (for Card / Bank / Wallet) -->
+                        <div id="pos-ref-field" class="hidden">
+                            <label class="block text-[11px] font-semibold text-slate-600 mb-1">Transaction Ref / Approval Code</label>
+                            <input type="text" name="payment_reference" id="pos_payment_reference" placeholder="e.g. POS-TXN-9842"
+                                   class="w-full text-xs border border-slate-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-emerald-500 font-medium">
+                        </div>
+
+                        <!-- Notes / Dispensing Instructions -->
+                        <div>
+                            <label class="block text-[11px] font-semibold text-slate-600 mb-1">Pharmacist / Dispensing Notes (Optional)</label>
+                            <input type="text" name="sale_notes" id="pos_sale_notes" placeholder="e.g. Patient advised regarding hydration..."
+                                   class="w-full text-xs border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-slate-700">
+                        </div>
+                    </div>
+
+                    <!-- Final Submission Checkout Button -->
+                    <div class="pt-3 border-t border-slate-200 space-y-2">
+                        <button type="submit" id="btn-pos-submit" disabled
+                                class="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-print text-emerald-200"></i>
+                            <span>Process Sale &amp; Print Patient Slip (F9)</span>
+                        </button>
+                        <p class="text-[10px] text-center text-slate-400">
+                            Press <kbd class="px-1.5 py-0.5 bg-slate-200 rounded text-slate-700 font-mono font-bold">F9</kbd> anywhere on screen for instant checkout &bull; Auto-prints bilingual slip
+                        </p>
+                    </div>
+
+                </div>
+
+            </div>
+        </form>
+
+        <!-- POS Counter Recent Transactions Ledger Drawer -->
+        <?php if (!empty($recentPosSales)): ?>
+        <div class="border-t border-slate-200 bg-slate-50/60 p-5">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                <div>
+                    <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                        <i class="fa-solid fa-clock-rotate-left text-slate-500"></i>
+                        <span>Today's Counter POS Sales Ledger</span>
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700"><?= count($recentPosSales) ?> Recent</span>
+                    </h4>
+                    <p class="text-[11px] text-slate-500">Recent completed transactions at this counter with 1-click re-print options</p>
+                </div>
+                <div class="text-xs text-slate-500 font-medium">
+                    <span><?= date('l, d M Y') ?></span>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="bg-slate-100/70 border-b border-slate-200 text-[11px] font-semibold text-slate-600">
+                            <th class="px-4 py-2.5">Invoice #</th>
+                            <th class="px-4 py-2.5">Date &amp; Time</th>
+                            <th class="px-4 py-2.5">Customer / Patient</th>
+                            <th class="px-4 py-2.5">Items Purchased</th>
+                            <th class="px-4 py-2.5">Payment</th>
+                            <th class="px-4 py-2.5 text-right">Net Amount</th>
+                            <th class="px-4 py-2.5 text-right">Print Receipt</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        <?php foreach ($recentPosSales as $sale): ?>
+                        <tr class="hover:bg-slate-50/80 transition-colors">
+                            <td class="px-4 py-2.5 font-mono font-bold text-slate-800">
+                                <?= htmlspecialchars($sale['sale_invoice_number']) ?>
+                            </td>
+                            <td class="px-4 py-2.5 text-slate-500 whitespace-nowrap">
+                                <?= date('h:i A', strtotime($sale['created_at'])) ?>
+                            </td>
+                            <td class="px-4 py-2.5 font-medium text-slate-900">
+                                <div><?= htmlspecialchars($sale['customer_name'] ?? 'Walk-in Customer') ?></div>
+                                <?php if (!empty($sale['mrn'])): ?>
+                                <span class="text-[10px] text-teal-700 font-mono font-semibold">MRN: <?= htmlspecialchars($sale['mrn']) ?></span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="px-4 py-2.5 text-slate-600 max-w-xs truncate" title="<?= htmlspecialchars($sale['items_summary'] ?? '') ?>">
+                                <span class="font-bold text-slate-700"><?= $sale['total_items'] ?> Meds:</span>
+                                <span class="text-slate-500 text-[11px]"><?= htmlspecialchars($sale['items_summary'] ?? 'Items dispensed') ?></span>
+                            </td>
+                            <td class="px-4 py-2.5">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                                    <?= str_replace('_', ' ', $sale['payment_method']) ?>
+                                </span>
+                            </td>
+                            <td class="px-4 py-2.5 text-right font-mono font-bold text-slate-900">
+                                <?= format_currency($sale['net_total']) ?>
+                            </td>
+                            <td class="px-4 py-2.5 text-right whitespace-nowrap">
+                                <div class="inline-flex items-center gap-1.5">
+                                    <a href="index.php?page=print_pos_receipt&sale_id=<?= $sale['id'] ?>&mode=thermal&autoprint=1" target="_blank"
+                                       class="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-md font-bold text-[11px] flex items-center gap-1 transition-colors"
+                                       title="Print 80mm POS Thermal Slip">
+                                        <i class="fa-solid fa-receipt text-[10px]"></i>
+                                        <span>Slip (80mm)</span>
+                                    </a>
+                                    <a href="index.php?page=print_pos_receipt&sale_id=<?= $sale['id'] ?>&mode=standard" target="_blank"
+                                       class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-md font-semibold text-[11px] flex items-center gap-1 transition-colors"
+                                       title="Print Standard A4 Hospital Invoice">
+                                        <i class="fa-solid fa-file-invoice text-[10px]"></i>
+                                        <span>A4</span>
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <?php endif; ?>
+
+    </div>
+
     <!-- Main Content Section: Two Columns -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
@@ -411,411 +989,6 @@ $recentPosSales = $db->query("
                 </a>
             </div>
 
-        </div>
-
-    </div>
-
-    <!-- ========================================================================= -->
-    <!-- COMPREHENSIVE POINT OF SALE (POS) COUNTER & TERMINAL -->
-    <!-- ========================================================================= -->
-    <div id="dashboard-pos" class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden scroll-mt-6">
-        
-        <!-- POS Top Bar -->
-        <div class="px-6 py-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center text-xl flex-shrink-0">
-                    <i class="fa-solid fa-cash-register"></i>
-                </div>
-                <div>
-                    <div class="flex items-center gap-2">
-                        <h3 class="text-base font-bold tracking-tight">Hospital &amp; Pharmacy Point of Sale (POS)</h3>
-                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
-                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                            <span>POS-01 READY</span>
-                        </span>
-                    </div>
-                    <p class="text-xs text-slate-300 mt-0.5">
-                        Cashier: <strong class="text-white"><?= htmlspecialchars($currentUser['full_name']) ?></strong> (<?= htmlspecialchars($currentUser['role_name']) ?>) &bull;
-                        Active Formulary: <span class="text-emerald-400 font-semibold"><?= count($posDrugBatches) ?> In-Stock Batches</span>
-                    </p>
-                </div>
-            </div>
-
-            <!-- Real-time Live Clock & Quick Reset -->
-            <div class="flex items-center gap-3 text-xs">
-                <div class="bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700 font-mono text-slate-300 flex items-center gap-2">
-                    <i class="fa-regular fa-clock text-emerald-400"></i>
-                    <span id="pos-live-clock"><?= date('h:i:s A') ?></span>
-                </div>
-                <button type="button" onclick="resetPosCart()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition-colors flex items-center gap-1.5">
-                    <i class="fa-solid fa-rotate-right"></i>
-                    <span>Reset POS</span>
-                </button>
-            </div>
-        </div>
-
-        <!-- POS Workspace Form -->
-        <form method="POST" action="index.php?action=pos_sale_checkout" id="pos-sale-form" onsubmit="return validatePosCheckout(event)">
-            <?= csrf_field() ?>
-
-            <div class="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-                <!-- Left Column: Customer Details, Product Search & Cart (Cols 1-7) -->
-                <div class="lg:col-span-7 space-y-4">
-                    
-                    <!-- 1. Customer / Patient Context Selector Card -->
-                    <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                        <div class="flex items-center justify-between">
-                            <label class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                                <i class="fa-solid fa-user-tag text-teal-600"></i>
-                                <span>Customer / Patient Type</span>
-                            </label>
-                            <!-- Switcher Radio Buttons -->
-                            <div class="inline-flex bg-slate-200/80 p-0.5 rounded-lg text-xs font-medium">
-                                <label class="cursor-pointer px-3 py-1 rounded-md transition-all flex items-center gap-1.5 has-[:checked]:bg-white has-[:checked]:text-teal-800 has-[:checked]:font-bold has-[:checked]:shadow-xs text-slate-600">
-                                    <input type="radio" name="customer_type" value="walk_in" checked class="sr-only" onchange="toggleCustomerType('walk_in')">
-                                    <i class="fa-solid fa-person-walking"></i>
-                                    <span>Walk-in / OTC</span>
-                                </label>
-                                <label class="cursor-pointer px-3 py-1 rounded-md transition-all flex items-center gap-1.5 has-[:checked]:bg-white has-[:checked]:text-teal-800 has-[:checked]:font-bold has-[:checked]:shadow-xs text-slate-600">
-                                    <input type="radio" name="customer_type" value="registered" class="sr-only" onchange="toggleCustomerType('registered')">
-                                    <i class="fa-solid fa-hospital-user"></i>
-                                    <span>Registered Patient</span>
-                                </label>
-                            </div>
-                        </div>
-
-                        <!-- Walk-in Customer Fields -->
-                        <div id="pos-walkin-fields" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div>
-                                <label class="form-label text-[11px]">Customer / Buyer Name</label>
-                                <input type="text" name="customer_name" id="pos_customer_name" value="Walk-in Customer" class="form-input text-xs" placeholder="e.g. Ali Khan">
-                            </div>
-                            <div>
-                                <label class="form-label text-[11px]">Contact Phone Number</label>
-                                <input type="text" name="customer_phone" id="pos_customer_phone" class="form-input text-xs" placeholder="e.g. 0300-1234567">
-                            </div>
-                        </div>
-
-                        <!-- Registered Patient Selector (Hidden by default) -->
-                        <div id="pos-registered-fields" class="hidden space-y-2">
-                            <div>
-                                <label class="form-label text-[11px]">Select Registered Hospital Patient <span class="text-rose-500">*</span></label>
-                                <select name="patient_id" id="pos_patient_id" class="form-input text-xs" onchange="onSelectRegisteredPatient(this)">
-                                    <option value="">-- Choose Hospital Patient (MRN / Name) --</option>
-                                    <?php foreach ($posPatients as $pat): ?>
-                                    <option value="<?= $pat['id'] ?>" 
-                                            data-name="<?= htmlspecialchars($pat['first_name'] . ' ' . $pat['last_name']) ?>" 
-                                            data-phone="<?= htmlspecialchars($pat['phone_primary']) ?>"
-                                            data-mrn="<?= htmlspecialchars($pat['mrn']) ?>"
-                                            data-gender="<?= htmlspecialchars($pat['gender']) ?>"
-                                            data-age="<?= (int)$pat['age'] ?>">
-                                        <?= htmlspecialchars($pat['mrn']) ?> &bull; <?= htmlspecialchars($pat['first_name'] . ' ' . $pat['last_name']) ?> (<?= htmlspecialchars($pat['gender']) ?>, <?= (int)$pat['age'] ?>y) - <?= htmlspecialchars($pat['phone_primary']) ?>
-                                    </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div id="pos-selected-pat-info" class="text-[11px] text-teal-800 bg-teal-50/70 p-2 rounded-lg border border-teal-200 hidden">
-                                <i class="fa-solid fa-id-badge text-teal-600 mr-1"></i>
-                                <span id="pos-pat-summary"></span>
-                            </div>
-                        </div>
-
-                    </div>
-
-                    <!-- 2. Product Search & Quick Add Bar -->
-                    <div class="p-4 bg-teal-50/30 border border-teal-200 rounded-xl space-y-3">
-                        <label class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center justify-between">
-                            <span class="flex items-center gap-1.5">
-                                <i class="fa-solid fa-barcode text-teal-600"></i>
-                                <span>Select Medication / Drug Batch</span>
-                            </span>
-                            <span class="text-[10px] text-slate-500 font-normal">Real-time Batch Stock &amp; Pricing</span>
-                        </label>
-
-                        <div class="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                            <!-- Drug Select -->
-                            <div class="sm:col-span-8">
-                                <select id="pos_batch_selector" class="form-input text-xs font-medium" onchange="onPosBatchSelected(this)">
-                                    <option value="">-- Search &amp; Select Medicine from Formulary --</option>
-                                    <?php foreach ($posDrugBatches as $b): 
-                                        $isControlled = (bool)$b['is_controlled_substance'];
-                                        $nearExp = $b['days_to_expiry'] <= 90;
-                                    ?>
-                                    <option value="<?= $b['batch_id'] ?>"
-                                            data-brand="<?= htmlspecialchars($b['brand_name']) ?>"
-                                            data-generic="<?= htmlspecialchars($b['generic_name']) ?>"
-                                            data-dosage="<?= htmlspecialchars($b['dosage_form'] . ' ' . $b['strength']) ?>"
-                                            data-batch="<?= htmlspecialchars($b['batch_number']) ?>"
-                                            data-expiry="<?= date('d/m/Y', strtotime($b['expiry_date'])) ?>"
-                                            data-price="<?= (float)$b['unit_sale_price'] ?>"
-                                            data-stock="<?= (int)$b['current_quantity'] ?>"
-                                            data-controlled="<?= $isControlled ? '1' : '0' ?>"
-                                            data-schedule="<?= htmlspecialchars($b['narcotic_schedule'] ?? '') ?>">
-                                        <?= htmlspecialchars($b['brand_name']) ?> (<?= htmlspecialchars($b['dosage_form']) ?> <?= htmlspecialchars($b['strength']) ?>) &bull; Batch: <?= htmlspecialchars($b['batch_number']) ?> &bull; Stock: <?= (int)$b['current_quantity'] ?> &bull; Rs. <?= number_format($b['unit_sale_price'], 2) ?> <?= $isControlled ? '⚠️ [CONTROLLED]' : '' ?>
-                                    </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-
-                            <!-- Quantity Input -->
-                            <div class="sm:col-span-2">
-                                <input type="number" id="pos_item_qty" min="1" max="999" value="1" class="form-input text-xs text-center font-bold font-mono" placeholder="Qty" onkeydown="if(event.key==='Enter'){event.preventDefault();addSelectedToPosCart();}">
-                            </div>
-
-                            <!-- Add Button -->
-                            <div class="sm:col-span-2">
-                                <button type="button" onclick="addSelectedToPosCart()" class="w-full h-full min-h-[34px] bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold shadow-xs transition-colors flex items-center justify-center gap-1">
-                                    <i class="fa-solid fa-plus"></i>
-                                    <span>Add</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Dynamic Drug Context Details Bar -->
-                        <div id="pos-item-preview" class="hidden text-xs bg-white p-2.5 rounded-lg border border-teal-200/80 flex flex-wrap items-center justify-between gap-2">
-                            <div class="flex items-center gap-2">
-                                <span class="font-bold text-slate-800" id="preview-brand"></span>
-                                <span class="text-slate-500" id="preview-generic"></span>
-                                <span id="preview-controlled-badge"></span>
-                            </div>
-                            <div class="flex items-center gap-3 font-mono text-[11px]">
-                                <span>Batch: <strong id="preview-batch" class="text-slate-700"></strong></span>
-                                <span>Exp: <strong id="preview-expiry" class="text-slate-700"></strong></span>
-                                <span>Stock: <strong id="preview-stock" class="text-emerald-700"></strong></span>
-                                <span>Rate: <strong id="preview-price" class="text-teal-800"></strong></span>
-                            </div>
-                        </div>
-
-                    </div>
-
-                    <!-- 3. POS Cart Table -->
-                    <div class="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-                        <div class="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
-                            <span class="font-bold text-xs text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                                <i class="fa-solid fa-cart-shopping text-teal-600"></i>
-                                <span>POS Billing Cart</span>
-                            </span>
-                            <span id="pos-cart-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800">
-                                0 Items
-                            </span>
-                        </div>
-
-                        <div class="max-h-64 overflow-y-auto custom-scrollbar">
-                            <table class="w-full text-left text-xs" id="pos-cart-table">
-                                <thead class="bg-slate-50/70 text-slate-500 font-semibold uppercase text-[10px] border-b border-slate-100 sticky top-0 bg-white">
-                                    <tr>
-                                        <th class="px-3 py-2">#</th>
-                                        <th class="px-3 py-2">Medicine / Batch</th>
-                                        <th class="px-3 py-2 text-right">Unit Price</th>
-                                        <th class="px-3 py-2 text-center">Qty</th>
-                                        <th class="px-3 py-2 text-right">Total</th>
-                                        <th class="px-3 py-2 text-center">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="pos-cart-tbody" class="divide-y divide-slate-100">
-                                    <!-- Empty Row placeholder -->
-                                    <tr id="pos-cart-empty">
-                                        <td colspan="6" class="py-8 text-center text-slate-400">
-                                            <i class="fa-solid fa-basket-shopping text-2xl mb-1.5 text-slate-300"></i>
-                                            <p class="text-xs">No items in the POS cart yet.</p>
-                                            <p class="text-[11px] text-slate-400">Search and add medications above to start billing.</p>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                </div>
-
-                <!-- Right Column: Financial Summary & Checkout Drawer (Cols 8-12) -->
-                <div class="lg:col-span-5 flex flex-col justify-between space-y-4 bg-slate-50/70 p-5 rounded-xl border border-slate-200">
-                    
-                    <div class="space-y-4">
-                        <div class="border-b border-slate-200 pb-2">
-                            <h4 class="font-bold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                                <i class="fa-solid fa-file-invoice-dollar text-teal-600"></i>
-                                <span>POS Checkout &amp; Payment Summary</span>
-                            </h4>
-                        </div>
-
-                        <!-- Calculations Box -->
-                        <div class="space-y-2 text-xs">
-                            <div class="flex justify-between items-center text-slate-600">
-                                <span>Subtotal:</span>
-                                <span class="font-mono font-bold text-slate-800" id="pos-subtotal-txt">Rs. 0.00</span>
-                            </div>
-
-                            <!-- Discount Input -->
-                            <div class="flex justify-between items-center gap-2">
-                                <label class="text-slate-600 flex items-center gap-1">
-                                    <span>Discount (PKR):</span>
-                                </label>
-                                <input type="number" step="0.01" min="0" name="discount_amount" id="pos_discount" value="0.00" class="form-input text-xs w-28 text-right font-mono" oninput="recalcPosTotals()">
-                            </div>
-
-                            <!-- Tax Input -->
-                            <div class="flex justify-between items-center gap-2">
-                                <label class="text-slate-600 flex items-center gap-1">
-                                    <span>Tax / GST (PKR):</span>
-                                </label>
-                                <input type="number" step="0.01" min="0" name="tax_amount" id="pos_tax" value="0.00" class="form-input text-xs w-28 text-right font-mono" oninput="recalcPosTotals()">
-                            </div>
-
-                            <!-- Grand Total Box -->
-                            <div class="p-3.5 bg-gradient-to-r from-teal-900 to-slate-900 text-white rounded-xl flex items-center justify-between shadow-xs">
-                                <div>
-                                    <div class="text-[10px] text-teal-300 font-bold uppercase tracking-wider">Net Amount Payable</div>
-                                    <div class="text-xs text-slate-400">Includes all discounts &amp; taxes</div>
-                                </div>
-                                <div class="text-xl font-black font-mono text-emerald-400" id="pos-net-total-txt">
-                                    Rs. 0.00
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Payment Method Selector -->
-                        <div class="space-y-1.5">
-                            <label class="form-label text-[11px]">Payment Method <span class="text-rose-500">*</span></label>
-                            <select name="payment_method" id="pos_payment_method" class="form-input text-xs font-semibold" onchange="onPaymentMethodChange(this.value)">
-                                <option value="Cash">Cash (Immediate Counter Payment)</option>
-                                <option value="Card">Credit / Debit Card (POS Machine)</option>
-                                <option value="Bank_Transfer">Bank Transfer / Online IBFT</option>
-                                <option value="Mobile_Wallet">Mobile Wallet (JazzCash / EasyPaisa)</option>
-                                <option value="Bill_to_Encounter" id="opt-bill-encounter" disabled>Bill to Patient Hospital Encounter</option>
-                            </select>
-                        </div>
-
-                        <!-- Tendered & Change (For Cash payments) -->
-                        <div id="pos-cash-details" class="space-y-2 p-3 bg-white border border-slate-200 rounded-lg">
-                            <div class="flex items-center justify-between text-xs">
-                                <span class="font-medium text-slate-700">Cash Received / Tendered:</span>
-                                <input type="number" step="0.01" min="0" name="amount_tendered" id="pos_amount_tendered" value="0.00" class="form-input text-xs w-28 text-right font-mono font-bold text-slate-900" oninput="calcPosChange()">
-                            </div>
-
-                            <!-- Quick Cash Buttons -->
-                            <div class="flex items-center gap-1.5 pt-1">
-                                <span class="text-[10px] text-slate-400 font-semibold">Quick:</span>
-                                <button type="button" onclick="setExactTender()" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] rounded font-semibold transition-colors">Exact</button>
-                                <button type="button" onclick="addTender(500)" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] rounded font-semibold transition-colors">500</button>
-                                <button type="button" onclick="addTender(1000)" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] rounded font-semibold transition-colors">1,000</button>
-                                <button type="button" onclick="addTender(5000)" class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] rounded font-semibold transition-colors">5,000</button>
-                            </div>
-
-                            <!-- Change Display -->
-                            <div class="flex items-center justify-between pt-1 border-t border-slate-100 text-xs font-bold">
-                                <span class="text-slate-600">Change Due:</span>
-                                <span class="font-mono text-sm text-teal-800" id="pos-change-txt">Rs. 0.00</span>
-                            </div>
-                        </div>
-
-                        <!-- Card / Bank Ref Input (Hidden by default) -->
-                        <div id="pos-ref-field" class="hidden">
-                            <label class="form-label text-[11px]">Card Slip # / Transaction Reference</label>
-                            <input type="text" name="payment_reference" id="pos_payment_ref" class="form-input text-xs" placeholder="e.g. CARD-AUTH-88219 or IBFT-9912">
-                        </div>
-
-                        <!-- Sale Notes -->
-                        <div>
-                            <label class="form-label text-[11px]">Sale Notes / Prescriber Memo (Optional)</label>
-                            <input type="text" name="sale_notes" class="form-input text-xs" placeholder="e.g. OTC cold relief, prescribed by Dr. Tariq">
-                        </div>
-                    </div>
-
-                    <!-- Checkout & Print Action Buttons -->
-                    <div class="pt-2 space-y-2">
-                        <button type="submit" id="btn-pos-submit" disabled class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2">
-                            <i class="fa-solid fa-receipt text-sm"></i>
-                            <span>Process POS Sale &amp; Print Receipt</span>
-                        </button>
-                        <p class="text-[10px] text-center text-slate-400">
-                            Stock is automatically deducted via FEFO &bull; Centralized invoice updated
-                        </p>
-                    </div>
-
-                </div>
-
-            </div>
-        </form>
-
-        <!-- POS Recent Transactions Drawer (Today's Sales) -->
-        <div class="border-t border-slate-200 bg-slate-50/50 p-6">
-            <div class="flex items-center justify-between mb-3">
-                <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                    <i class="fa-solid fa-clock-rotate-left text-teal-600"></i>
-                    <span>Recent POS Sales Counter Ledger</span>
-                </h4>
-                <a href="index.php?page=pharmacy&tab=queue" class="text-xs text-teal-700 font-semibold hover:underline">
-                    View Complete Pharmacy Ledger &rarr;
-                </a>
-            </div>
-
-            <div class="overflow-x-auto">
-                <table class="w-full text-left text-xs bg-white rounded-xl border border-slate-200 overflow-hidden">
-                    <thead class="bg-slate-100/70 text-slate-600 font-semibold uppercase text-[10px] border-b border-slate-200">
-                        <tr>
-                            <th class="px-4 py-2.5">Invoice #</th>
-                            <th class="px-4 py-2.5">Date &amp; Time</th>
-                            <th class="px-4 py-2.5">Customer / Patient</th>
-                            <th class="px-4 py-2.5">Items Sold</th>
-                            <th class="px-4 py-2.5">Payment Method</th>
-                            <th class="px-4 py-2.5 text-right">Net Total</th>
-                            <th class="px-4 py-2.5 text-right">Print Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-100">
-                        <?php if (empty($recentPosSales)): ?>
-                        <tr>
-                            <td colspan="7" class="px-4 py-6 text-center text-slate-400">
-                                <i class="fa-solid fa-cash-register text-xl mb-1 text-slate-300"></i>
-                                <p>No POS sales recorded today yet.</p>
-                            </td>
-                        </tr>
-                        <?php else: ?>
-                        <?php foreach ($recentPosSales as $sale): ?>
-                        <tr class="hover:bg-slate-50/80 transition-colors">
-                            <td class="px-4 py-2.5 font-mono font-bold text-teal-800">
-                                <?= htmlspecialchars($sale['sale_invoice_number']) ?>
-                            </td>
-                            <td class="px-4 py-2.5 font-mono text-[11px] text-slate-500">
-                                <?= date('d M, h:i A', strtotime($sale['created_at'])) ?>
-                            </td>
-                            <td class="px-4 py-2.5 font-medium text-slate-800">
-                                <?= htmlspecialchars($sale['customer_name'] ?? 'Walk-in') ?>
-                                <?php if (!empty($sale['mrn'])): ?>
-                                <span class="text-[10px] font-mono text-teal-700 ml-1">(<?= htmlspecialchars($sale['mrn']) ?>)</span>
-                                <?php endif; ?>
-                            </td>
-                            <td class="px-4 py-2.5 max-w-xs truncate text-[11px] text-slate-600" title="<?= htmlspecialchars($sale['items_summary'] ?? '') ?>">
-                                <span class="font-bold text-slate-800"><?= (int)$sale['total_items'] ?> item(s):</span> <?= htmlspecialchars($sale['items_summary'] ?? 'N/A') ?>
-                            </td>
-                            <td class="px-4 py-2.5">
-                                <span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                                    <?= htmlspecialchars($sale['payment_method']) ?>
-                                </span>
-                            </td>
-                            <td class="px-4 py-2.5 text-right font-mono font-bold text-slate-900">
-                                <?= format_currency($sale['net_total']) ?>
-                            </td>
-                            <td class="px-4 py-2.5 text-right">
-                                <div class="flex items-center justify-end gap-1.5">
-                                    <a href="index.php?page=print_pos_receipt&sale_id=<?= $sale['id'] ?>&mode=thermal" target="_blank" class="px-2 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded font-semibold text-[11px] flex items-center gap-1 transition-colors" title="Print 80mm POS Slip">
-                                        <i class="fa-solid fa-receipt text-[10px] text-teal-600"></i>
-                                        <span>Slip</span>
-                                    </a>
-                                    <a href="index.php?page=print_pos_receipt&sale_id=<?= $sale['id'] ?>&mode=standard" target="_blank" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded font-semibold text-[11px] flex items-center gap-1 transition-colors" title="Print A4 Invoice">
-                                        <i class="fa-solid fa-file-invoice text-[10px]"></i>
-                                        <span>A4</span>
-                                    </a>
-                                </div>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
-            </div>
         </div>
 
     </div>
@@ -962,6 +1135,8 @@ $recentPosSales = $db->query("
 <!-- ========================================================================= -->
 <script>
 let posCart = [];
+const pendingRxData = <?= json_encode($pendingRxItemsMap) ?>;
+const pendingRxList = <?= json_encode($pendingPrescriptionsList) ?>;
 
 // 1. Live Real-time Clock for POS Terminal
 function updatePosClock() {
@@ -972,6 +1147,7 @@ function updatePosClock() {
     }
 }
 setInterval(updatePosClock, 1000);
+updatePosClock();
 
 // 2. Customer Type Switcher (Walk-in vs Registered Patient)
 function toggleCustomerType(type) {
@@ -995,6 +1171,7 @@ function toggleCustomerType(type) {
         custPhoneInput.value = '';
         patSelect.value = '';
         document.getElementById('pos-selected-pat-info').classList.add('hidden');
+        document.getElementById('pos_loaded_prescription_id').value = '';
     } else {
         walkinDiv.classList.add('hidden');
         regDiv.classList.remove('hidden');
@@ -1003,7 +1180,27 @@ function toggleCustomerType(type) {
     }
 }
 
-// 3. Registered Patient Auto-Selection Handler
+// 3. Filter Registered Patients by Name, Phone, or MRN
+function filterPosPatients(keyword) {
+    const term = keyword.toLowerCase().trim();
+    const select = document.getElementById('pos_patient_id');
+    const options = select.options;
+
+    for (let i = 1; i < options.length; i++) {
+        const opt = options[i];
+        const text = opt.textContent.toLowerCase();
+        const phone = (opt.dataset.phone || '').toLowerCase();
+        const mrn = (opt.dataset.mrn || '').toLowerCase();
+
+        if (!term || text.includes(term) || phone.includes(term) || mrn.includes(term)) {
+            opt.hidden = false;
+        } else {
+            opt.hidden = true;
+        }
+    }
+}
+
+// 4. Registered Patient Auto-Selection Handler
 function onSelectRegisteredPatient(sel) {
     const opt = sel.options[sel.selectedIndex];
     const infoBox = document.getElementById('pos-selected-pat-info');
@@ -1030,7 +1227,7 @@ function onSelectRegisteredPatient(sel) {
     }
 }
 
-// 4. Batch Selector Preview Handler
+// 5. Batch Selector Preview Handler
 function onPosBatchSelected(sel) {
     const opt = sel.options[sel.selectedIndex];
     const previewBox = document.getElementById('pos-item-preview');
@@ -1061,10 +1258,18 @@ function onPosBatchSelected(sel) {
     }
 }
 
-// 5. Add Item to POS Cart
+// 6. Formulary Picker Preset Handler
+function onPickerPresetChange(val) {
+    if (val) {
+        document.getElementById('pos_picker_instructions').value = val;
+    }
+}
+
+// 7. Add Selected Item from Formulary to POS Cart
 function addSelectedToPosCart() {
     const sel = document.getElementById('pos_batch_selector');
     const qtyInput = document.getElementById('pos_item_qty');
+    const instructionsInput = document.getElementById('pos_picker_instructions');
     const opt = sel.options[sel.selectedIndex];
 
     if (!opt || !opt.value) {
@@ -1077,6 +1282,7 @@ function addSelectedToPosCart() {
     const qty = parseInt(qtyInput.value) || 0;
     const stock = parseInt(opt.dataset.stock) || 0;
     const price = parseFloat(opt.dataset.price) || 0;
+    const instructions = instructionsInput.value.trim() || 'حسب ہدایت معالج (As Directed)';
 
     if (qty <= 0) {
         alert('Quantity must be at least 1.');
@@ -1099,6 +1305,9 @@ function addSelectedToPosCart() {
             return;
         }
         posCart[existingIndex].qty = newQty;
+        if (instructions && instructions !== 'حسب ہدایت معالج (As Directed)') {
+            posCart[existingIndex].dosage_instructions = instructions;
+        }
     } else {
         posCart.push({
             batchId: batchId,
@@ -1109,7 +1318,8 @@ function addSelectedToPosCart() {
             expiry: opt.dataset.expiry,
             price: price,
             stock: stock,
-            qty: qty
+            qty: qty,
+            dosage_instructions: instructions
         });
     }
 
@@ -1118,11 +1328,146 @@ function addSelectedToPosCart() {
     // Reset selector
     sel.value = '';
     qtyInput.value = 1;
+    instructionsInput.value = '';
+    document.getElementById('pos_picker_dosage_preset').value = '';
     document.getElementById('pos-item-preview').classList.add('hidden');
     sel.focus();
 }
 
-// 6. Render Cart Table
+// 8. Quick-Tap Fast-Moving OTC Addition (1-Click Instant Add)
+function addQuickMed(batchId, brandName, price, dosage, batchNumber, expiryDate, stock) {
+    if (stock <= 0) {
+        alert(`${brandName} is currently out of stock.`);
+        return;
+    }
+
+    const existingIndex = posCart.findIndex(item => item.batchId === batchId);
+    if (existingIndex !== -1) {
+        const newQty = posCart[existingIndex].qty + 1;
+        if (newQty > stock) {
+            alert(`Cannot add more. Stock limit of ${stock} reached for ${brandName}.`);
+            return;
+        }
+        posCart[existingIndex].qty = newQty;
+    } else {
+        // Default common sensible instruction for quick meds
+        let defaultInstruction = 'حسب ہدایت معالج (As Directed)';
+        if (brandName.toLowerCase().includes('panadol') || brandName.toLowerCase().includes('brufen')) {
+            defaultInstruction = '1 گولی ضرورت پڑنے پر / درد میں';
+        } else if (brandName.toLowerCase().includes('risek')) {
+            defaultInstruction = '1 صبح نہار منہ';
+        } else if (brandName.toLowerCase().includes('augmentin')) {
+            defaultInstruction = '1 صبح 1 شام کھانے کے بعد';
+        }
+
+        posCart.push({
+            batchId: batchId,
+            brand: brandName,
+            generic: '',
+            dosage: dosage,
+            batch: batchNumber,
+            expiry: expiryDate,
+            price: price,
+            stock: stock,
+            qty: 1,
+            dosage_instructions: defaultInstruction
+        });
+    }
+
+    renderPosCart();
+}
+
+// 9. Fast-Load Doctor OPD Prescription into POS Cart
+function triggerLoadRx() {
+    const sel = document.getElementById('pos_load_rx_select');
+    if (!sel || !sel.value) {
+        alert('Please select a pending doctor prescription from the list.');
+        sel.focus();
+        return;
+    }
+    loadPrescriptionIntoPos(parseInt(sel.value));
+}
+
+function onSelectPrescriptionToLoad(sel) {
+    if (sel.value) {
+        loadPrescriptionIntoPos(parseInt(sel.value));
+    }
+}
+
+function loadPrescriptionIntoPos(rxId) {
+    const rx = pendingRxList.find(r => parseInt(r.prescription_id) === rxId);
+    if (!rx) {
+        alert('Prescription details not found.');
+        return;
+    }
+
+    const items = pendingRxData[rxId] || [];
+    if (items.length === 0) {
+        alert('No medication items found for this prescription.');
+        return;
+    }
+
+    // 1. Switch to registered customer mode
+    const regRadio = document.querySelector('input[name="customer_type"][value="registered"]');
+    if (regRadio) {
+        regRadio.checked = true;
+        toggleCustomerType('registered');
+    }
+
+    // 2. Select patient
+    const patSelect = document.getElementById('pos_patient_id');
+    patSelect.value = rx.patient_id;
+    onSelectRegisteredPatient(patSelect);
+
+    // 3. Mark prescription ID
+    document.getElementById('pos_loaded_prescription_id').value = rxId;
+
+    // 4. Populate Cart with prescribed items using matched FEFO batches
+    posCart = [];
+    let loadedCount = 0;
+    let missingStockItems = [];
+
+    items.forEach(it => {
+        const batchId = parseInt(it.matched_batch_id);
+        const stock = parseInt(it.matched_stock) || 0;
+
+        if (batchId && stock > 0) {
+            const requestedQty = parseInt(it.quantity_prescribed) || 1;
+            const dispenseQty = Math.min(requestedQty, stock);
+            const instructions = (it.instructions && it.instructions.trim()) ? it.instructions.trim() : (it.dosage ? (it.dosage + ' ' + (it.frequency || '')) : 'حسب ہدایت معالج');
+
+            posCart.push({
+                batchId: batchId,
+                brand: it.brand_name,
+                generic: it.generic_name,
+                dosage: it.dosage_form + ' ' + it.strength,
+                batch: it.matched_batch_number,
+                expiry: it.matched_expiry_date,
+                price: parseFloat(it.matched_price) || 0,
+                stock: stock,
+                qty: dispenseQty,
+                dosage_instructions: instructions
+            });
+            loadedCount++;
+        } else {
+            missingStockItems.push(it.brand_name);
+        }
+    });
+
+    renderPosCart();
+
+    // 5. Show alert message
+    const alertBox = document.getElementById('pos-rx-loaded-alert');
+    const alertText = document.getElementById('pos-rx-loaded-text');
+    let msg = `Loaded Doctor Prescription #${rx.prescription_number} for ${rx.first_name} ${rx.last_name} (${loadedCount} items added from Dr. ${rx.doctor_name}).`;
+    if (missingStockItems.length > 0) {
+        msg += ` Note: ${missingStockItems.join(', ')} currently out of stock.`;
+    }
+    alertText.textContent = msg;
+    alertBox.classList.remove('hidden');
+}
+
+// 10. Render Cart Table with Urdu Dosage Presets
 function renderPosCart() {
     const tbody = document.getElementById('pos-cart-tbody');
     const emptyRow = document.getElementById('pos-cart-empty');
@@ -1136,7 +1481,7 @@ function renderPosCart() {
     if (posCart.length === 0) {
         if (emptyRow) emptyRow.style.display = '';
         badge.textContent = '0 Items';
-        badge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600';
         submitBtn.disabled = true;
     } else {
         if (emptyRow) emptyRow.style.display = 'none';
@@ -1146,31 +1491,47 @@ function renderPosCart() {
         posCart.forEach((item, idx) => {
             totalUnits += item.qty;
             const lineTotal = (item.qty * item.price).toFixed(2);
+            const currentDir = item.dosage_instructions || '';
 
             const tr = document.createElement('tr');
             tr.className = 'pos-cart-item-row hover:bg-slate-50/80 transition-colors';
             tr.innerHTML = `
-                <td class="px-3 py-2 font-mono text-slate-400 text-[11px] align-middle">${idx + 1}</td>
-                <td class="px-3 py-2 align-middle">
+                <td class="px-3 py-2.5 font-mono text-slate-400 text-[11px] align-middle">${idx + 1}</td>
+                <td class="px-3 py-2.5 align-middle">
                     <div class="font-bold text-slate-900">${escapeHtml(item.brand)}</div>
                     <div class="text-[10px] text-slate-500">${escapeHtml(item.dosage)} &bull; <span class="font-mono text-slate-600">B:${escapeHtml(item.batch)}</span> &bull; <span class="text-slate-400">Exp:${escapeHtml(item.expiry)}</span></div>
                     <input type="hidden" name="item_batch_id[]" value="${item.batchId}">
                     <input type="hidden" name="item_unit_price[]" value="${item.price}">
                 </td>
-                <td class="px-3 py-2 text-right font-mono font-semibold text-slate-700 align-middle">
+                <td class="px-3 py-2.5 text-right font-mono font-semibold text-slate-700 align-middle">
                     Rs. ${item.price.toFixed(2)}
                 </td>
-                <td class="px-3 py-2 text-center align-middle">
+                <td class="px-3 py-2.5 text-center align-middle">
                     <div class="inline-flex items-center border border-slate-200 rounded-lg bg-white overflow-hidden shadow-2xs">
                         <button type="button" onclick="adjustCartQty(${item.batchId}, -1)" class="px-2 py-0.5 text-slate-600 hover:bg-slate-100 font-bold text-xs">-</button>
                         <input type="number" name="item_quantity[]" value="${item.qty}" min="1" max="${item.stock}" onchange="setCartQty(${item.batchId}, this.value)" class="w-12 text-center text-xs font-bold font-mono border-x border-slate-200 py-0.5 outline-none">
                         <button type="button" onclick="adjustCartQty(${item.batchId}, 1)" class="px-2 py-0.5 text-slate-600 hover:bg-slate-100 font-bold text-xs">+</button>
                     </div>
                 </td>
-                <td class="px-3 py-2 text-right font-mono font-bold text-slate-900 align-middle">
+                <td class="px-3 py-2.5 align-middle">
+                    <div class="space-y-1">
+                        <select onchange="onRowPresetChange(${idx}, this.value)" class="w-full text-[10px] border border-slate-200 rounded px-1.5 py-0.5 bg-slate-50 text-slate-700">
+                            <option value="">-- طریقہ استعمال (Preset) --</option>
+                            <option value="1 صبح 1 شام کھانے کے بعد" ${currentDir === '1 صبح 1 شام کھانے کے بعد' ? 'selected' : ''}>1 صبح 1 شام کھانے کے بعد</option>
+                            <option value="1 صبح نہار منہ" ${currentDir === '1 صبح نہار منہ' ? 'selected' : ''}>1 صبح نہار منہ</option>
+                            <option value="1 صبح 1 دوپہر 1 شام کھانے کے بعد" ${currentDir === '1 صبح 1 دوپہر 1 شام کھانے کے بعد' ? 'selected' : ''}>1 صبح 1 دوپہر 1 شام کھانے کے بعد</option>
+                            <option value="ایک چمچ دن میں 3 بار" ${currentDir === 'ایک چمچ دن میں 3 بار' ? 'selected' : ''}>ایک چمچ دن میں 3 بار</option>
+                            <option value="1 گولی ضرورت پڑنے پر / درد میں" ${currentDir === '1 گولی ضرورت پڑنے پر / درد میں' ? 'selected' : ''}>1 گولی ضرورت پڑنے پر / درد میں</option>
+                            <option value="رات کو سوتے وقت 1 گولی" ${currentDir === 'رات کو سوتے وقت 1 گولی' ? 'selected' : ''}>رات کو سوتے وقت 1 گولی</option>
+                            <option value="حسب ہدایت معالج" ${currentDir === 'حسب ہدایت معالج' ? 'selected' : ''}>حسب ہدایت معالج</option>
+                        </select>
+                        <input type="text" name="item_dosage_instructions[]" value="${escapeHtml(currentDir)}" oninput="onRowDosageTextChange(${idx}, this.value)" placeholder="طریقہ استعمال / Instructions..." class="w-full text-xs border border-slate-200 rounded px-2 py-1 focus:border-teal-500 focus:ring-1 focus:ring-teal-500">
+                    </div>
+                </td>
+                <td class="px-3 py-2.5 text-right font-mono font-bold text-slate-900 align-middle">
                     Rs. ${lineTotal}
                 </td>
-                <td class="px-3 py-2 text-center align-middle">
+                <td class="px-2 py-2.5 text-center align-middle">
                     <button type="button" onclick="removePosCartItem(${item.batchId})" class="p-1 text-rose-500 hover:bg-rose-50 rounded transition-colors" title="Remove item">
                         <i class="fa-solid fa-trash-can text-xs"></i>
                     </button>
@@ -1180,14 +1541,28 @@ function renderPosCart() {
         });
 
         badge.textContent = `${totalUnits} Items (${posCart.length} SKU)`;
-        badge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800';
+        badge.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800';
         submitBtn.disabled = false;
     }
 
     recalcPosTotals();
 }
 
-// 7. Adjust Cart Item Quantity
+// 11. Row Dosage Instruction Handlers
+function onRowPresetChange(idx, val) {
+    if (posCart[idx] && val) {
+        posCart[idx].dosage_instructions = val;
+        renderPosCart();
+    }
+}
+
+function onRowDosageTextChange(idx, val) {
+    if (posCart[idx]) {
+        posCart[idx].dosage_instructions = val;
+    }
+}
+
+// 12. Adjust Cart Item Quantity
 function adjustCartQty(batchId, delta) {
     const item = posCart.find(i => i.batchId === batchId);
     if (item) {
@@ -1219,13 +1594,13 @@ function setCartQty(batchId, val) {
     }
 }
 
-// 8. Remove Item from Cart
+// 13. Remove Item from Cart
 function removePosCartItem(batchId) {
     posCart = posCart.filter(i => i.batchId !== batchId);
     renderPosCart();
 }
 
-// 9. Recalculate POS Financial Totals
+// 14. Recalculate POS Financial Totals
 function recalcPosTotals() {
     let subtotal = 0;
     posCart.forEach(i => {
@@ -1246,7 +1621,7 @@ function recalcPosTotals() {
     calcPosChange();
 }
 
-// 10. Payment Method Switcher
+// 15. Payment Method Switcher
 function onPaymentMethodChange(method) {
     const refField = document.getElementById('pos-ref-field');
     const cashDiv = document.getElementById('pos-cash-details');
@@ -1264,7 +1639,7 @@ function onPaymentMethodChange(method) {
     calcPosChange();
 }
 
-// 11. Calculate Change Returned
+// 16. Calculate Change Returned
 function calcPosChange() {
     let subtotal = 0;
     posCart.forEach(i => subtotal += (i.qty * i.price));
@@ -1291,7 +1666,7 @@ function calcPosChange() {
     }
 }
 
-// 12. Quick Tender Convenience Buttons
+// 17. Quick Tender Convenience Buttons
 function setExactTender() {
     let subtotal = 0;
     posCart.forEach(i => subtotal += (i.qty * i.price));
@@ -1309,7 +1684,7 @@ function addTender(amount) {
     calcPosChange();
 }
 
-// 13. Reset Entire POS Form
+// 18. Reset Entire POS Form
 function resetPosCart() {
     if (posCart.length > 0 && !confirm('Are you sure you want to reset and clear the current POS cart?')) {
         return;
@@ -1319,11 +1694,13 @@ function resetPosCart() {
     document.getElementById('pos_tax').value = '0.00';
     document.getElementById('pos_amount_tendered').value = '0.00';
     document.getElementById('pos_batch_selector').value = '';
+    document.getElementById('pos_loaded_prescription_id').value = '';
+    document.getElementById('pos-rx-loaded-alert').classList.add('hidden');
     document.getElementById('pos-item-preview').classList.add('hidden');
     renderPosCart();
 }
 
-// 14. Validation Before Checkout
+// 19. Validation Before Checkout
 function validatePosCheckout(e) {
     if (posCart.length === 0) {
         alert('POS Cart is empty. Please add at least one medication to proceed.');
