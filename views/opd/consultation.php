@@ -80,6 +80,46 @@ if ($encounterId > 0) {
         $noteStmt = $db->prepare("SELECT * FROM `consultation_notes` WHERE `encounter_id` = ?");
         $noteStmt->execute([$encounterId]);
         $currentNotes = $noteStmt->fetch();
+
+        // Fetch Past Verified Lab Reports
+        $pastLabStmt = $db->prepare("
+            SELECT lo.order_number, lo.order_datetime, lt.test_name, lt.specimen_type,
+                   loi.item_status, loi.sample_barcode,
+                   lr.parameter_name, lr.observed_value, lr.unit_of_measure, lr.reference_range, lr.flag
+            FROM `lab_orders` lo
+            JOIN `lab_order_items` loi ON lo.id = loi.lab_order_id
+            JOIN `lab_tests` lt ON loi.lab_test_id = lt.id
+            LEFT JOIN `lab_results` lr ON loi.id = lr.lab_order_item_id
+            JOIN `encounters` e ON lo.encounter_id = e.id
+            WHERE e.patient_id = ? AND loi.item_status = 'Verified'
+            ORDER BY lo.order_datetime DESC LIMIT 20
+        ");
+        $pastLabStmt->execute([$currentEncounter['patient_id']]);
+        $pastLabReports = $pastLabStmt->fetchAll();
+
+        // Fetch Prescriptions for THIS encounter (if already entered)
+        $encRxStmt = $db->prepare("
+            SELECT p.prescription_number, p.clinical_notes, p.created_at,
+                   pi.dosage, pi.frequency, pi.duration_days, pi.instructions, pi.quantity_prescribed,
+                   di.brand_name, di.generic_name, di.strength, di.dosage_form
+            FROM `prescriptions` p
+            JOIN `prescription_items` pi ON p.id = pi.prescription_id
+            JOIN `drug_items` di ON pi.drug_item_id = di.id
+            WHERE p.encounter_id = ?
+        ");
+        $encRxStmt->execute([$encounterId]);
+        $currentEncounterRx = $encRxStmt->fetchAll();
+
+        // Fetch Ordered Lab Tests for THIS encounter
+        $encLabStmt = $db->prepare("
+            SELECT lo.order_number, lt.test_name, lt.specimen_type, lt.standard_price, loi.item_status
+            FROM `lab_orders` lo
+            JOIN `lab_order_items` loi ON lo.id = loi.lab_order_id
+            JOIN `lab_tests` lt ON loi.lab_test_id = lt.id
+            WHERE lo.encounter_id = ?
+        ");
+        $encLabStmt->execute([$encounterId]);
+        $currentEncounterLabs = $encLabStmt->fetchAll();
     }
 }
 
@@ -179,6 +219,14 @@ $labTests = $db->query("SELECT id, test_name, test_code, specimen_type, standard
                         </div>
 
                         <div class="flex items-center gap-2">
+                            <button type="button" onclick="document.getElementById('pastLabsModal').classList.remove('hidden')" class="px-3 py-1.5 bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-colors">
+                                <i class="fa-solid fa-flask-vial text-purple-600"></i>
+                                <span>Past Labs (<?= count($pastLabReports) ?>)</span>
+                            </button>
+                            <button type="button" onclick="document.getElementById('prescriptionModal').classList.remove('hidden')" class="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold rounded-lg shadow-sm flex items-center gap-1.5 transition-colors">
+                                <i class="fa-solid fa-print"></i>
+                                <span>Print Rx</span>
+                            </button>
                             <a href="index.php?page=patient_profile&id=<?= $currentEncounter['patient_id'] ?>" target="_blank" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg flex items-center gap-1.5">
                                 <i class="fa-solid fa-clock-rotate-left text-slate-500"></i>
                                 <span>Past History</span>
@@ -373,6 +421,28 @@ $labTests = $db->query("SELECT id, test_name, test_code, specimen_type, standard
                         </div>
                     </div>
 
+                    <!-- Section 5: Follow-Up Appointment & Clinical Guidance -->
+                    <div class="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4">
+                        <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-2">
+                            <i class="fa-solid fa-calendar-check text-medical-600"></i>
+                            <span>Schedule Follow-Up Appointment & Clinical Instructions</span>
+                        </h4>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-700 mb-1">Recommended Follow-up Date</label>
+                                <input type="date" name="follow_up_date" min="<?= date('Y-m-d') ?>" value="<?= htmlspecialchars($currentNotes['follow_up_date'] ?? '') ?>" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none focus:border-medical-500">
+                                <span class="text-[10px] text-slate-400 mt-1 block">Leaving blank means no scheduled follow-up required.</span>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-700 mb-1">Follow-up Clinical Notes & Targets</label>
+                                <input type="text" name="follow_up_notes" placeholder="e.g. Review fasting blood sugar and BP response" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none focus:border-medical-500">
+                                <span class="text-[10px] text-slate-400 mt-1 block">Notes will be placed on the follow-up token slip.</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Submit & Disposition Bar -->
                     <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div class="flex items-center gap-3">
@@ -402,6 +472,242 @@ $labTests = $db->query("SELECT id, test_name, test_code, specimen_type, standard
 
 </div>
 
+<!-- Modal 1: Past Verified Lab Reports -->
+<div id="pastLabsModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 max-h-[85vh] flex flex-col">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <i class="fa-solid fa-flask-vial text-purple-600"></i>
+                <span>Past Verified Diagnostic Results & Laboratory History</span>
+            </h3>
+            <button onclick="document.getElementById('pastLabsModal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-1 text-xs">
+            <?php if (empty($pastLabReports)): ?>
+                <div class="py-12 text-center text-slate-400">
+                    <i class="fa-solid fa-file-circle-question text-3xl mb-2 text-slate-300"></i>
+                    <p>No verified diagnostic laboratory reports recorded for this patient.</p>
+                </div>
+            <?php else: ?>
+                <div class="border border-slate-200 rounded-xl overflow-hidden">
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-slate-50 text-slate-600 uppercase text-[10px] font-semibold border-b border-slate-200">
+                            <tr>
+                                <th class="px-3 py-2">Test / Order</th>
+                                <th class="px-3 py-2">Parameter</th>
+                                <th class="px-3 py-2">Observed</th>
+                                <th class="px-3 py-2">Ref Range</th>
+                                <th class="px-3 py-2">Flag</th>
+                                <th class="px-3 py-2">Date</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            <?php foreach ($pastLabReports as $plr): ?>
+                            <tr class="hover:bg-slate-50">
+                                <td class="px-3 py-2">
+                                    <div class="font-bold text-slate-900"><?= htmlspecialchars($plr['test_name']) ?></div>
+                                    <div class="font-mono text-[10px] text-slate-400"><?= htmlspecialchars($plr['order_number']) ?></div>
+                                </td>
+                                <td class="px-3 py-2 font-medium text-slate-800"><?= htmlspecialchars($plr['parameter_name'] ?? 'N/A') ?></td>
+                                <td class="px-3 py-2 font-bold text-slate-900 font-mono"><?= htmlspecialchars($plr['observed_value'] ?? '--') ?> <span class="text-[10px] font-normal text-slate-500"><?= htmlspecialchars($plr['unit_of_measure'] ?? '') ?></span></td>
+                                <td class="px-3 py-2 text-slate-500 font-mono text-[11px]"><?= htmlspecialchars($plr['reference_range'] ?? 'Standard') ?></td>
+                                <td class="px-3 py-2">
+                                    <?php if (!empty($plr['flag']) && $plr['flag'] !== 'Normal'): ?>
+                                        <span class="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-800"><?= htmlspecialchars($plr['flag']) ?></span>
+                                    <?php else: ?>
+                                        <span class="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-50 text-emerald-700">Normal</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="px-3 py-2 text-slate-400 text-[10px] whitespace-nowrap"><?= format_date($plr['order_datetime']) ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </div>
+
+        <div class="pt-3 border-t border-slate-100 flex justify-end">
+            <button type="button" onclick="document.getElementById('pastLabsModal').classList.add('hidden')" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold">
+                Close Viewer
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal 2: Printable Clinical Prescription & Consultation Summary -->
+<?php 
+$shouldOpenRx = !empty($_GET['print_rx']) && $currentEncounter;
+$docUser = null;
+if ($currentEncounter) {
+    $docStmt = $db->prepare("
+        SELECT u.full_name, u.email, d.department_name, u.consultation_fee 
+        FROM `users` u 
+        LEFT JOIN `departments` d ON u.department_id = d.id 
+        WHERE u.id = ?
+    ");
+    $docStmt->execute([$currentEncounter['attending_doctor_id']]);
+    $docUser = $docStmt->fetch();
+}
+?>
+<div id="prescriptionModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 <?= $shouldOpenRx ? '' : 'hidden' ?>">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] flex flex-col relative">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 no-print">
+            <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <i class="fa-solid fa-file-prescription text-teal-600"></i>
+                <span>Official Clinical Prescription & Medical Record</span>
+            </h3>
+            <button onclick="document.getElementById('prescriptionModal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+        </div>
+
+        <!-- Printable Document Canvas -->
+        <div id="printablePrescriptionArea" class="flex-1 overflow-y-auto custom-scrollbar p-6 border-2 border-dashed border-slate-200 rounded-xl bg-white space-y-4 font-sans text-xs">
+            <!-- Letterhead -->
+            <div class="flex items-center justify-between border-b-2 border-slate-800 pb-3">
+                <div>
+                    <div class="font-black text-lg text-slate-900 tracking-tight uppercase"><?= APP_NAME ?></div>
+                    <div class="text-[11px] font-semibold text-slate-600"><?= htmlspecialchars($docUser['department_name'] ?? 'Outpatient Department') ?></div>
+                    <div class="text-[10px] text-slate-400">Peshawar Medical Complex, Khyber Pakhtunkhwa</div>
+                </div>
+                <div class="text-right">
+                    <div class="font-bold text-sm text-slate-900"><?= htmlspecialchars($docUser['full_name'] ?? 'Attending Consultant') ?></div>
+                    <div class="text-[11px] text-slate-500">Consultant Physician & Specialist</div>
+                    <div class="text-[10px] font-mono text-slate-400">Encounter: <?= htmlspecialchars($currentEncounter['encounter_number'] ?? '') ?></div>
+                </div>
+            </div>
+
+            <!-- Patient Demographic & Vitals Bar -->
+            <div class="grid grid-cols-4 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-200 text-[11px]">
+                <div>
+                    <span class="text-slate-400 block text-[9px] uppercase font-bold">Patient Name</span>
+                    <strong class="text-slate-900"><?= htmlspecialchars($currentEncounter['first_name'] . ' ' . $currentEncounter['last_name']) ?></strong>
+                </div>
+                <div>
+                    <span class="text-slate-400 block text-[9px] uppercase font-bold">MRN / ID</span>
+                    <span class="font-mono font-bold text-medical-800"><?= htmlspecialchars($currentEncounter['mrn']) ?></span>
+                </div>
+                <div>
+                    <span class="text-slate-400 block text-[9px] uppercase font-bold">Age / Gender</span>
+                    <span class="text-slate-800"><?= $currentEncounter['age'] ?> Yrs &bull; <?= htmlspecialchars($currentEncounter['gender']) ?></span>
+                </div>
+                <div>
+                    <span class="text-slate-400 block text-[9px] uppercase font-bold">Visit Date</span>
+                    <span class="text-slate-800"><?= format_date($currentEncounter['admission_datetime']) ?></span>
+                </div>
+                <?php if ($currentVitals): ?>
+                <div class="col-span-4 pt-2 border-t border-slate-200/80 flex flex-wrap items-center gap-3 text-[10px] text-slate-600 font-mono">
+                    <span><strong>BP:</strong> <?= $currentVitals['systolic_bp'] ?>/<?= $currentVitals['diastolic_bp'] ?> mmHg</span>
+                    <span><strong>Pulse:</strong> <?= $currentVitals['pulse_rate_bpm'] ?> bpm</span>
+                    <span><strong>Temp:</strong> <?= $currentVitals['temperature_celsius'] ?> °C</span>
+                    <span><strong>SpO2:</strong> <?= $currentVitals['spo2_percentage'] ?>%</span>
+                    <span><strong>Weight:</strong> <?= $currentVitals['weight_kg'] ?> kg</span>
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <!-- Diagnosis -->
+            <div class="border-b border-slate-100 pb-2">
+                <span class="text-slate-400 text-[9px] uppercase font-bold block">Clinical Diagnosis / Problem</span>
+                <div class="font-bold text-slate-900 text-sm flex items-center gap-2 mt-0.5">
+                    <span><?= htmlspecialchars($currentNotes['provisional_diagnosis'] ?? ($currentEncounter['primary_diagnosis'] ?? 'Under Evaluation')) ?></span>
+                    <?php if (!empty($currentNotes['icd10_code'])): ?>
+                        <span class="font-mono text-xs font-semibold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">[ICD-10: <?= htmlspecialchars($currentNotes['icd10_code']) ?>]</span>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <!-- Rx Symbol & Medicines Table -->
+            <div>
+                <div class="font-serif font-black text-xl text-teal-800 mb-1">℞ Prescribed Medications</div>
+                <table class="w-full text-left text-xs border border-slate-200 rounded-lg overflow-hidden">
+                    <thead class="bg-slate-50 font-bold uppercase text-[9px] text-slate-600 border-b border-slate-200">
+                        <tr>
+                            <th class="px-3 py-1.5">Medicine Name</th>
+                            <th class="px-2 py-1.5">Dosage</th>
+                            <th class="px-2 py-1.5">Frequency</th>
+                            <th class="px-2 py-1.5">Duration</th>
+                            <th class="px-3 py-1.5">Instructions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 text-[11px]">
+                        <?php if (empty($currentEncounterRx)): ?>
+                            <tr><td colspan="5" class="px-3 py-3 text-center text-slate-400">No oral/injectable medications prescribed in this encounter.</td></tr>
+                        <?php else: ?>
+                            <?php foreach ($currentEncounterRx as $erx): ?>
+                            <tr>
+                                <td class="px-3 py-2 font-bold text-slate-900">
+                                    <?= htmlspecialchars($erx['brand_name']) ?>
+                                    <span class="text-[10px] font-normal text-slate-500 block"><?= htmlspecialchars($erx['generic_name']) ?> (<?= htmlspecialchars($erx['strength']) ?>)</span>
+                                </td>
+                                <td class="px-2 py-2 text-slate-700"><?= htmlspecialchars($erx['dosage']) ?></td>
+                                <td class="px-2 py-2 font-semibold text-slate-800"><?= htmlspecialchars($erx['frequency']) ?></td>
+                                <td class="px-2 py-2 text-slate-700"><?= $erx['duration_days'] ?> Days</td>
+                                <td class="px-3 py-2 text-slate-600 italic"><?= htmlspecialchars($erx['instructions']) ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Ordered Diagnostic Investigations -->
+            <?php if (!empty($currentEncounterLabs)): ?>
+            <div class="bg-purple-50/50 p-3 rounded-lg border border-purple-200">
+                <span class="text-purple-900 text-[10px] uppercase font-bold block mb-1">Ordered Laboratory & Diagnostic Tests:</span>
+                <div class="flex flex-wrap gap-2">
+                    <?php foreach ($currentEncounterLabs as $el): ?>
+                        <span class="px-2 py-1 bg-white border border-purple-300 rounded font-semibold text-purple-900 text-xs shadow-xs">
+                            <?= htmlspecialchars($el['test_name']) ?> (<?= htmlspecialchars($el['specimen_type']) ?>)
+                        </span>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <!-- Advice & Follow-up Guidance -->
+            <div class="grid grid-cols-2 gap-3 pt-2">
+                <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <span class="text-slate-400 text-[9px] uppercase font-bold block">Doctor Advice & Lifestyle</span>
+                    <p class="text-slate-800 mt-1"><?= htmlspecialchars($currentNotes['clinical_advice'] ?? 'Follow prescribed medication and diet as instructed.') ?></p>
+                </div>
+                <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <span class="text-slate-400 text-[9px] uppercase font-bold block">Scheduled Review / Follow-up</span>
+                    <strong class="text-medical-800 font-bold text-xs mt-1 block">
+                        <?= !empty($currentNotes['follow_up_date']) ? format_date($currentNotes['follow_up_date']) : 'As needed / SOS' ?>
+                    </strong>
+                </div>
+            </div>
+
+            <!-- Sign-off Block -->
+            <div class="pt-8 flex justify-between items-end border-t border-slate-200">
+                <div class="text-[9px] text-slate-400">
+                    Generated via <?= APP_NAME ?> EMR &bull; Computer generated prescription
+                </div>
+                <div class="text-center w-48 border-t border-slate-800 pt-1">
+                    <span class="font-bold text-slate-900 block"><?= htmlspecialchars($docUser['full_name'] ?? 'Doctor') ?></span>
+                    <span class="text-[9px] text-slate-500">Authorized Medical Signature & Stamp</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Print Action Buttons -->
+        <div class="mt-4 pt-3 border-t border-slate-100 flex items-center justify-end gap-2 no-print">
+            <button type="button" onclick="document.getElementById('prescriptionModal').classList.add('hidden')" class="px-4 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold">
+                Close
+            </button>
+            <button type="button" onclick="printPrescriptionDoc()" class="px-5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5">
+                <i class="fa-solid fa-print text-[11px]"></i>
+                <span>Print Official Prescription</span>
+            </button>
+        </div>
+    </div>
+</div>
+
 <script>
     function addPrescriptionRow() {
         const container = document.getElementById('rxRowsContainer');
@@ -416,5 +722,22 @@ $labTests = $db->query("SELECT id, test_name, test_code, specimen_type, standard
             });
             container.appendChild(clone);
         }
+    }
+
+    function printPrescriptionDoc() {
+        const printContent = document.getElementById('printablePrescriptionArea').innerHTML;
+        const printWindow = window.open('', '', 'height=750,width=650');
+        printWindow.document.write('<html><head><title>Prescription - <?= htmlspecialchars($currentEncounter['mrn'] ?? '') ?></title>');
+        printWindow.document.write('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tailwindcss/typography@0.5.x/dist/typography.min.css">');
+        printWindow.document.write('<style>body{font-family: sans-serif; padding: 25px;} table{width:100%; border-collapse:collapse;} th,td{border:1px solid #e2e8f0; padding:6px;}</style>');
+        printWindow.document.write('</head><body>');
+        printWindow.document.write(printContent);
+        printWindow.document.write('</body></html>');
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+        }, 250);
     }
 </script>

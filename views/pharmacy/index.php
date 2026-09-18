@@ -6,9 +6,11 @@ require_once __DIR__ . '/../../config/database.php';
 $db = Database::getConnection();
 
 $activeTab = clean_input($_GET['tab'] ?? 'queue');
+$rxSearch = clean_input($_GET['search'] ?? '');
+$printReceiptRxId = (int)($_GET['print_receipt'] ?? 0);
 
-// Fetch Prescriptions Queue
-$prescriptions = $db->query("
+// Fetch Prescriptions Queue with optional search
+$rxQuery = "
     SELECT p.*, e.encounter_number, e.encounter_type,
            pt.id AS patient_id, pt.first_name, pt.last_name, pt.mrn, pt.gender, pt.age,
            u.full_name AS doctor_name,
@@ -17,8 +19,48 @@ $prescriptions = $db->query("
     JOIN `encounters` e ON p.encounter_id = e.id
     JOIN `patients` pt ON e.patient_id = pt.id
     JOIN `users` u ON p.doctor_id = u.id
-    ORDER BY p.id DESC
-")->fetchAll();
+";
+$rxParams = [];
+if (!empty($rxSearch)) {
+    $rxQuery .= " WHERE p.prescription_number LIKE ? OR pt.mrn LIKE ? OR pt.first_name LIKE ? OR pt.last_name LIKE ?";
+    $searchTerm = "%$rxSearch%";
+    $rxParams = [$searchTerm, $searchTerm, $searchTerm, $searchTerm];
+}
+$rxQuery .= " ORDER BY p.id DESC";
+$rxStmt = $db->prepare($rxQuery);
+$rxStmt->execute($rxParams);
+$prescriptions = $rxStmt->fetchAll();
+
+// If print receipt requested, fetch receipt details
+$receiptData = null;
+$receiptItems = [];
+if ($printReceiptRxId > 0) {
+    $recStmt = $db->prepare("
+        SELECT p.*, e.encounter_number, e.encounter_type,
+               pt.id AS patient_id, pt.first_name, pt.last_name, pt.mrn, pt.gender, pt.age, pt.phone_primary,
+               u.full_name AS doctor_name, d.department_name
+        FROM `prescriptions` p
+        JOIN `encounters` e ON p.encounter_id = e.id
+        JOIN `patients` pt ON e.patient_id = pt.id
+        JOIN `users` u ON p.doctor_id = u.id
+        LEFT JOIN `departments` d ON u.department_id = d.id
+        WHERE p.id = ?
+    ");
+    $recStmt->execute([$printReceiptRxId]);
+    $receiptData = $recStmt->fetch();
+
+    if ($receiptData) {
+        $recItemStmt = $db->prepare("
+            SELECT pi.*, di.brand_name, di.generic_name, di.strength, di.dosage_form,
+                   COALESCE((SELECT unit_sale_price FROM `drug_batches` WHERE drug_item_id = di.id ORDER BY expiry_date ASC LIMIT 1), 0) AS unit_price
+            FROM `prescription_items` pi
+            JOIN `drug_items` di ON pi.drug_item_id = di.id
+            WHERE pi.prescription_id = ?
+        ");
+        $recItemStmt->execute([$printReceiptRxId]);
+        $receiptItems = $recItemStmt->fetchAll();
+    }
+}
 
 // Fetch Drug Stock & Batches
 $batches = $db->query("
@@ -55,10 +97,24 @@ $batches = $db->query("
     <!-- Tab 1: Prescriptions Dispense Queue -->
     <?php if ($activeTab === 'queue'): ?>
     <div class="space-y-4">
+
+        <!-- Search / Scan Bar -->
+        <form action="index.php" method="GET" class="flex items-center gap-3">
+            <input type="hidden" name="page" value="pharmacy">
+            <input type="hidden" name="tab" value="queue">
+            <div class="relative flex-1 max-w-md">
+                <input type="text" name="search" value="<?= htmlspecialchars($rxSearch) ?>" placeholder="Scan Rx Token (RX-XXXX), MRN, or Patient Name..." class="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl outline-none focus:border-medical-500 font-mono shadow-xs">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-xs"></i>
+            </div>
+            <?php if (!empty($rxSearch)): ?>
+                <a href="index.php?page=pharmacy&tab=queue" class="px-3 py-2 text-xs text-slate-500 hover:text-slate-800 font-semibold">Clear</a>
+            <?php endif; ?>
+        </form>
+
         <?php if (empty($prescriptions)): ?>
             <div class="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">
                 <i class="fa-solid fa-prescription text-3xl mb-2 text-slate-300"></i>
-                <p>No prescriptions waiting in dispensing queue.</p>
+                <p>No prescriptions found in dispensing queue.</p>
             </div>
         <?php else: ?>
             <?php foreach ($prescriptions as $rx): 
@@ -88,6 +144,9 @@ $batches = $db->query("
                                 <span class="font-mono text-xs text-medical-800 bg-medical-50 border border-medical-200 px-2 py-0.5 rounded font-semibold">
                                     <?= htmlspecialchars($rx['mrn']) ?>
                                 </span>
+                                <span class="font-mono text-xs text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
+                                    <?= htmlspecialchars($rx['prescription_number']) ?>
+                                </span>
                                 <span class="px-2 py-0.5 rounded text-[10px] font-bold <?= $rx['encounter_type'] === 'Emergency' ? 'bg-rose-100 text-rose-700' : 'bg-sky-100 text-sky-700' ?>">
                                     <?= htmlspecialchars($rx['encounter_type']) ?>
                                 </span>
@@ -98,10 +157,14 @@ $batches = $db->query("
                         </div>
                     </div>
 
-                    <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-2">
                         <span class="px-3 py-1 rounded-full text-xs font-bold <?= $isDispensed ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800' ?>">
                             <?= htmlspecialchars($rx['status']) ?>
                         </span>
+                        <a href="index.php?page=pharmacy&tab=queue&print_receipt=<?= $rx['id'] ?>" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors" title="Print Pharmacy Dispensation Receipt">
+                            <i class="fa-solid fa-receipt text-slate-500 text-[11px]"></i>
+                            <span>Receipt</span>
+                        </a>
                         <?php if (!$isDispensed): ?>
                         <form action="index.php?action=pharmacy_dispense" method="POST" onsubmit="return confirm('Dispense this prescription and deduct stock via FEFO?')">
                             <?= csrf_field() ?>
@@ -196,3 +259,148 @@ $batches = $db->query("
     <?php endif; ?>
 
 </div>
+
+<!-- Printable Two-Part Pharmacy Dispensing Receipt Modal -->
+<?php if ($receiptData): ?>
+<div id="pharmacyReceiptModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] flex flex-col relative">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 no-print">
+            <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <i class="fa-solid fa-receipt text-teal-600"></i>
+                <span>Pharmacy Dispensing Receipt (Two-Part Slip)</span>
+            </h3>
+            <button onclick="document.getElementById('pharmacyReceiptModal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+        </div>
+
+        <!-- Printable Canvas -->
+        <div id="printablePharmacyArea" class="flex-1 overflow-y-auto custom-scrollbar p-5 border-2 border-dashed border-slate-200 rounded-xl bg-white space-y-5 font-sans text-xs">
+            
+            <?php 
+            $copies = [
+                'PATIENT DISPENSATION COPY',
+                'PHARMACY AUDIT / DISPENSARY LEDGER COPY'
+            ];
+            $grandTotal = 0;
+            foreach ($receiptItems as $it) {
+                $grandTotal += ($it['quantity_dispensed'] > 0 ? $it['quantity_dispensed'] : $it['quantity_prescribed']) * (float)$it['unit_price'];
+            }
+            foreach ($copies as $cIdx => $copyTitle): 
+            ?>
+            <div class="<?= $cIdx > 0 ? 'pt-4 border-t-2 border-dashed border-slate-400' : '' ?>">
+                <!-- Receipt Header -->
+                <div class="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <div>
+                        <div class="font-extrabold text-sm text-slate-900 uppercase tracking-tight"><?= APP_NAME ?></div>
+                        <div class="text-[10px] text-teal-800 font-bold uppercase">Formulary Pharmacy Dispensary</div>
+                    </div>
+                    <div class="text-right">
+                        <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-mono text-[9px] font-bold block"><?= $copyTitle ?></span>
+                        <span class="font-mono text-[10px] text-slate-500 font-bold"><?= htmlspecialchars($receiptData['prescription_number']) ?></span>
+                    </div>
+                </div>
+
+                <!-- Patient & Prescription Info -->
+                <div class="grid grid-cols-3 gap-2 py-2 text-[10px] border-b border-slate-100">
+                    <div>
+                        <span class="text-slate-400 block uppercase font-bold">Patient:</span>
+                        <strong class="text-slate-900"><?= htmlspecialchars($receiptData['first_name'] . ' ' . $receiptData['last_name']) ?></strong>
+                    </div>
+                    <div>
+                        <span class="text-slate-400 block uppercase font-bold">MRN:</span>
+                        <span class="font-mono text-medical-800 font-bold"><?= htmlspecialchars($receiptData['mrn']) ?></span>
+                    </div>
+                    <div>
+                        <span class="text-slate-400 block uppercase font-bold">Doctor:</span>
+                        <span class="text-slate-800"><?= htmlspecialchars($receiptData['doctor_name']) ?></span>
+                    </div>
+                    <div>
+                        <span class="text-slate-400 block uppercase font-bold">Date & Time:</span>
+                        <span class="text-slate-700"><?= format_datetime($receiptData['created_at']) ?></span>
+                    </div>
+                    <div>
+                        <span class="text-slate-400 block uppercase font-bold">Encounter:</span>
+                        <span class="font-mono text-slate-700"><?= htmlspecialchars($receiptData['encounter_number']) ?></span>
+                    </div>
+                    <div>
+                        <span class="text-slate-400 block uppercase font-bold">Status:</span>
+                        <span class="font-bold text-emerald-700"><?= htmlspecialchars($receiptData['status']) ?></span>
+                    </div>
+                </div>
+
+                <!-- Dispensed Items Table -->
+                <table class="w-full text-left text-[11px] mt-2">
+                    <thead class="border-b border-slate-200 text-[9px] uppercase text-slate-500 font-bold">
+                        <tr>
+                            <th class="py-1">Medication Item</th>
+                            <th class="py-1 text-center">Qty</th>
+                            <th class="py-1 text-right">Unit Price</th>
+                            <th class="py-1 text-right">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        <?php foreach ($receiptItems as $item): 
+                            $qty = ($item['quantity_dispensed'] > 0 ? $item['quantity_dispensed'] : $item['quantity_prescribed']);
+                            $lineTotal = $qty * (float)$item['unit_price'];
+                        ?>
+                        <tr>
+                            <td class="py-1">
+                                <span class="font-semibold text-slate-900"><?= htmlspecialchars($item['brand_name']) ?></span>
+                                <span class="text-[9px] text-slate-400 block"><?= htmlspecialchars($item['generic_name']) ?> (<?= htmlspecialchars($item['dosage']) ?> &bull; <?= htmlspecialchars($item['frequency']) ?>)</span>
+                            </td>
+                            <td class="py-1 text-center font-bold text-slate-800"><?= $qty ?></td>
+                            <td class="py-1 text-right font-mono text-slate-600"><?= format_currency($item['unit_price']) ?></td>
+                            <td class="py-1 text-right font-mono font-bold text-slate-900"><?= format_currency($lineTotal) ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                    <tfoot class="border-t-2 border-slate-800">
+                        <tr>
+                            <th colspan="3" class="py-1.5 text-right font-bold text-slate-800 uppercase text-[10px]">Net Medication Amount:</th>
+                            <th class="py-1.5 text-right font-mono font-black text-slate-900 text-xs"><?= format_currency($grandTotal) ?></th>
+                        </tr>
+                    </tfoot>
+                </table>
+
+                <div class="pt-2 flex justify-between items-center text-[9px] text-slate-400">
+                    <span>Medicines once dispensed cannot be returned. Keep at &lt; 25°C.</span>
+                    <span class="border-t border-slate-400 pt-0.5 text-slate-700 font-semibold">Pharmacist Stamp / Signature</span>
+                </div>
+            </div>
+            <?php endforeach; ?>
+
+        </div>
+
+        <!-- Buttons -->
+        <div class="mt-4 pt-3 border-t border-slate-100 flex items-center justify-end gap-2 no-print">
+            <button type="button" onclick="document.getElementById('pharmacyReceiptModal').classList.add('hidden')" class="px-4 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold">
+                Close
+            </button>
+            <button type="button" onclick="printPharmacyReceiptDoc()" class="px-5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5">
+                <i class="fa-solid fa-print text-[11px]"></i>
+                <span>Print Two-Part Dispensing Receipt</span>
+            </button>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
+<script>
+function printPharmacyReceiptDoc() {
+    const printContent = document.getElementById('printablePharmacyArea').innerHTML;
+    const printWindow = window.open('', '', 'height=750,width=550');
+    printWindow.document.write('<html><head><title>Pharmacy Receipt - <?= htmlspecialchars($receiptData['prescription_number'] ?? '') ?></title>');
+    printWindow.document.write('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tailwindcss/typography@0.5.x/dist/typography.min.css">');
+    printWindow.document.write('<style>body{font-family: sans-serif; padding: 20px;} table{width:100%; border-collapse:collapse;}</style>');
+    printWindow.document.write('</head><body>');
+    printWindow.document.write(printContent);
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+    }, 250);
+}
+</script>

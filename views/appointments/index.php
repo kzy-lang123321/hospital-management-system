@@ -38,6 +38,22 @@ if ($filterDoctor > 0) {
     $params[] = $filterDoctor;
 }
 
+$printTokenId = (int)($_GET['print_token'] ?? 0);
+$tokenSlipData = null;
+if ($printTokenId > 0) {
+    $slipStmt = $db->prepare("
+        SELECT a.*, p.mrn, p.first_name, p.last_name, p.phone_primary, p.gender, p.age,
+               u.full_name AS doctor_name, u.consultation_fee, d.department_name
+        FROM `appointments` a
+        JOIN `patients` p ON a.patient_id = p.id
+        JOIN `users` u ON a.doctor_id = u.id
+        JOIN `departments` d ON a.department_id = d.id
+        WHERE a.id = ?
+    ");
+    $slipStmt->execute([$printTokenId]);
+    $tokenSlipData = $slipStmt->fetch();
+}
+
 $query .= " ORDER BY a.slot_time ASC";
 $stmt = $db->prepare($query);
 $stmt->execute($params);
@@ -150,7 +166,22 @@ $appointments = $stmt->fetchAll();
                                     <?= htmlspecialchars($apt['status']) ?>
                                 </span>
                             </td>
-                            <td class="px-6 py-3.5 text-right">
+                            <td class="px-6 py-3.5 text-right flex items-center justify-end gap-2">
+                                <button type="button" onclick='openTokenSlip(<?= htmlspecialchars(json_encode([
+                                    "apt_number" => $apt["appointment_number"],
+                                    "token_number" => $apt["token_number"],
+                                    "patient_name" => $apt["first_name"] . " " . $apt["last_name"],
+                                    "mrn" => $apt["mrn"],
+                                    "phone" => $apt["phone_primary"],
+                                    "doctor_name" => $apt["doctor_name"],
+                                    "department" => $apt["department_name"],
+                                    "fee" => format_currency($apt["consultation_fee"]),
+                                    "date" => format_date($apt["appointment_date"]),
+                                    "time" => date("h:i A", strtotime($apt["slot_time"]))
+                                ]), ENT_QUOTES, "UTF-8") ?>)' class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-semibold transition-colors flex items-center gap-1" title="Print Token Slip">
+                                    <i class="fa-solid fa-print text-[10px]"></i>
+                                    <span>Slip</span>
+                                </button>
                                 <?php if ($apt['status'] !== 'Completed' && $apt['status'] !== 'Checked-In'): ?>
                                 <a href="index.php?action=appointment_checkin&id=<?= $apt['id'] ?>" class="px-3 py-1 bg-medical-600 hover:bg-medical-700 text-white rounded text-xs font-semibold transition-colors">
                                     Check In
@@ -243,3 +274,109 @@ $appointments = $stmt->fetchAll();
         </form>
     </div>
 </div>
+
+<!-- Printable Appointment & Token Slip Modal -->
+<div id="tokenSlipModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 <?= $tokenSlipData ? '' : 'hidden' ?>">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 relative">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 no-print">
+            <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <i class="fa-solid fa-ticket text-medical-600"></i>
+                <span>OPD Consultation Token Slip</span>
+            </h3>
+            <button onclick="document.getElementById('tokenSlipModal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+        </div>
+
+        <!-- Thermal / Slip Layout -->
+        <div id="printableTokenArea" class="mt-4 p-5 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 text-center font-sans space-y-3">
+            <div class="border-b border-slate-200 pb-2">
+                <div class="font-extrabold text-sm text-slate-900 tracking-tight uppercase"><?= APP_NAME ?></div>
+                <div class="text-[10px] text-slate-500 font-medium">OPD Outpatient Department Token</div>
+            </div>
+
+            <div class="py-2">
+                <div class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Your Queue Token</div>
+                <div id="slipTokenDisplay" class="text-4xl font-black font-mono text-medical-800 tracking-tight my-1">
+                    <?= $tokenSlipData ? 'TOKEN #' . $tokenSlipData['token_number'] : 'TOKEN #--' ?>
+                </div>
+                <div class="text-[10px] text-slate-500 font-mono" id="slipAptNum">
+                    <?= $tokenSlipData ? htmlspecialchars($tokenSlipData['appointment_number']) : '' ?>
+                </div>
+            </div>
+
+            <div class="text-left bg-white p-3 rounded-lg border border-slate-200 text-xs space-y-1.5">
+                <div class="flex justify-between">
+                    <span class="text-slate-500">Patient:</span>
+                    <strong id="slipPatientName" class="text-slate-900 font-bold"><?= $tokenSlipData ? htmlspecialchars($tokenSlipData['first_name'] . ' ' . $tokenSlipData['last_name']) : '' ?></strong>
+                </div>
+                <div class="flex justify-between font-mono text-[11px]">
+                    <span class="text-slate-500">MRN:</span>
+                    <strong id="slipMRN" class="text-medical-800 font-bold"><?= $tokenSlipData ? htmlspecialchars($tokenSlipData['mrn']) : '' ?></strong>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-500">Doctor:</span>
+                    <span id="slipDoctorName" class="font-semibold text-slate-800"><?= $tokenSlipData ? htmlspecialchars($tokenSlipData['doctor_name']) : '' ?></span>
+                </div>
+                <div class="flex justify-between text-[11px]">
+                    <span class="text-slate-500">Department:</span>
+                    <span id="slipDepartment" class="text-slate-700"><?= $tokenSlipData ? htmlspecialchars($tokenSlipData['department_name']) : '' ?></span>
+                </div>
+                <div class="flex justify-between text-[11px] pt-1.5 border-t border-slate-100">
+                    <span class="text-slate-500">Date & Time:</span>
+                    <span id="slipDateTime" class="font-semibold text-slate-800"><?= $tokenSlipData ? format_date($tokenSlipData['appointment_date']) . ' ' . date('h:i A', strtotime($tokenSlipData['slot_time'])) : '' ?></span>
+                </div>
+                <div class="flex justify-between text-[11px]">
+                    <span class="text-slate-500">Consultation Fee:</span>
+                    <strong id="slipFee" class="text-slate-900"><?= $tokenSlipData ? format_currency($tokenSlipData['consultation_fee']) : '' ?></strong>
+                </div>
+            </div>
+
+            <div class="text-[10px] text-slate-400 pt-1">
+                Please proceed to the OPD waiting area.<br>Listen for your token number announcement.
+            </div>
+        </div>
+
+        <!-- Buttons -->
+        <div class="mt-4 pt-3 border-t border-slate-100 flex items-center justify-end gap-2 no-print">
+            <button type="button" onclick="document.getElementById('tokenSlipModal').classList.add('hidden')" class="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold">
+                Close
+            </button>
+            <button type="button" onclick="printTokenSlip()" class="px-4 py-1.5 bg-medical-600 hover:bg-medical-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5">
+                <i class="fa-solid fa-print text-[11px]"></i>
+                <span>Print Token Slip</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function openTokenSlip(data) {
+    document.getElementById('slipTokenDisplay').textContent = 'TOKEN #' + data.token_number;
+    document.getElementById('slipAptNum').textContent = data.apt_number;
+    document.getElementById('slipPatientName').textContent = data.patient_name;
+    document.getElementById('slipMRN').textContent = data.mrn;
+    document.getElementById('slipDoctorName').textContent = data.doctor_name;
+    document.getElementById('slipDepartment').textContent = data.department;
+    document.getElementById('slipDateTime').textContent = data.date + ' ' + data.time;
+    document.getElementById('slipFee').textContent = data.fee;
+    document.getElementById('tokenSlipModal').classList.remove('hidden');
+}
+
+function printTokenSlip() {
+    const printContent = document.getElementById('printableTokenArea').innerHTML;
+    const printWindow = window.open('', '', 'height=500,width=400');
+    printWindow.document.write('<html><head><title>OPD Token Slip</title>');
+    printWindow.document.write('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tailwindcss/typography@0.5.x/dist/typography.min.css">');
+    printWindow.document.write('<style>body{font-family: monospace, sans-serif; padding: 15px; text-align: center;} .token{font-size: 32px; font-weight: 900;}</style>');
+    printWindow.document.write('</head><body>');
+    printWindow.document.write(printContent);
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+    }, 250);
+}
+</script>

@@ -9,6 +9,16 @@ $db = Database::getConnection();
 $latestId = $db->query("SELECT COALESCE(MAX(id), 0) FROM `patients`")->fetchColumn();
 $nextSeq = str_pad((string)($latestId + 1), 4, '0', STR_PAD_LEFT);
 $proposedMRN = 'MRN-' . date('Y') . '-' . $nextSeq;
+
+// Fetch active doctors for instant appointment booking
+$doctors = $db->query("
+    SELECT u.id, u.full_name, u.consultation_fee, d.department_name 
+    FROM `users` u
+    JOIN `roles` r ON u.role_id = r.id
+    LEFT JOIN `departments` d ON u.department_id = d.id
+    WHERE r.slug = 'doctor' AND u.status = 'Active'
+    ORDER BY u.full_name ASC
+")->fetchAll();
 ?>
 
 <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
@@ -25,6 +35,35 @@ $proposedMRN = 'MRN-' . date('Y') . '-' . $nextSeq;
         <div class="px-3 py-1.5 bg-medical-50 border border-medical-200 rounded-lg text-xs">
             <span class="text-slate-500 font-medium">Assigned MRN:</span>
             <strong class="font-mono text-medical-800 font-bold ml-1"><?= $proposedMRN ?></strong>
+        </div>
+    </div>
+
+    <!-- Live Duplicate Patient Warning Banner (Hidden by default) -->
+    <div id="duplicateAlertBanner" class="hidden bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 text-amber-900 shadow-sm transition-all animate-pulse-subtle">
+        <div class="flex items-start gap-3">
+            <div class="p-2 bg-amber-200 text-amber-800 rounded-xl mt-0.5">
+                <i class="fa-solid fa-triangle-exclamation text-base"></i>
+            </div>
+            <div class="flex-1 text-xs">
+                <h4 class="font-bold text-sm text-amber-950 flex items-center gap-2">
+                    <span>Potential Duplicate Patient Record Detected</span>
+                    <span class="bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider font-extrabold">Warning</span>
+                </h4>
+                <p class="mt-1 text-amber-800">
+                    A patient with identical Phone / CNIC is already registered in the system:
+                    <strong id="dupPatientName" class="text-slate-900 font-bold"></strong> 
+                    (MRN: <strong id="dupPatientMRN" class="font-mono text-medical-800 font-bold"></strong>).
+                </p>
+                <div class="mt-3 flex items-center gap-3">
+                    <a id="dupPatientLink" href="#" target="_blank" class="px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white font-bold rounded-lg transition-colors flex items-center gap-1.5">
+                        <i class="fa-solid fa-folder-open text-[11px]"></i>
+                        <span>Open Existing Patient Profile</span>
+                    </a>
+                    <button type="button" onclick="document.getElementById('duplicateAlertBanner').classList.add('hidden')" class="px-3 py-1.5 bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-lg font-semibold transition-colors">
+                        Ignore & Proceed (New Family Member)
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -94,7 +133,7 @@ $proposedMRN = 'MRN-' . date('Y') . '-' . $nextSeq;
 
                     <div>
                         <label class="block text-xs font-semibold text-slate-700 mb-1">National ID / CNIC</label>
-                        <input type="text" name="national_id" placeholder="17301-XXXXXXX-X" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none focus:border-medical-500">
+                        <input type="text" name="national_id" id="nationalIdInput" placeholder="17301-XXXXXXX-X" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none focus:border-medical-500">
                     </div>
                 </div>
             </div>
@@ -109,7 +148,7 @@ $proposedMRN = 'MRN-' . date('Y') . '-' . $nextSeq;
                 <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                     <div>
                         <label class="block text-xs font-semibold text-slate-700 mb-1">Primary Phone Number <span class="text-rose-500">*</span></label>
-                        <input type="text" name="phone_primary" required placeholder="+92 3XX XXXXXXX" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none focus:border-medical-500">
+                        <input type="text" name="phone_primary" id="phonePrimaryInput" required placeholder="+92 3XX XXXXXXX" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none focus:border-medical-500">
                     </div>
 
                     <div>
@@ -193,6 +232,43 @@ $proposedMRN = 'MRN-' . date('Y') . '-' . $nextSeq;
                 </div>
             </div>
 
+            <!-- Section 5: Instant Appointment & Token Booking Flow -->
+            <div class="bg-medical-50/40 rounded-2xl border border-medical-200 p-5 space-y-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2.5">
+                        <input type="checkbox" id="bookAppointmentNow" name="book_appointment_now" value="1" onchange="toggleInstantBooking(this.checked)" class="w-4 h-4 text-medical-600 rounded border-medical-300 focus:ring-medical-500">
+                        <label for="bookAppointmentNow" class="text-xs font-bold text-medical-950 cursor-pointer">
+                            Book Appointment & Generate OPD Token Immediately (Fast Track Intake)
+                        </label>
+                    </div>
+                    <span class="text-[10px] uppercase font-mono font-bold bg-medical-100 text-medical-800 px-2 py-0.5 rounded">1-Step Workflow</span>
+                </div>
+
+                <div id="instantBookingFields" class="hidden grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 border-t border-medical-200/60">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Attending Consultant Doctor <span class="text-rose-500">*</span></label>
+                        <select name="instant_doctor_id" id="instantDoctorSelect" class="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg outline-none focus:border-medical-500">
+                            <option value="">Select Doctor...</option>
+                            <?php foreach ($doctors as $doc): ?>
+                                <option value="<?= $doc['id'] ?>">
+                                    <?= htmlspecialchars($doc['full_name']) ?> &mdash; <?= htmlspecialchars($doc['department_name']) ?> (<?= format_currency($doc['consultation_fee']) ?>)
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Appointment Date</label>
+                        <input type="date" name="instant_appointment_date" value="<?= date('Y-m-d') ?>" class="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg outline-none focus:border-medical-500">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Reason for Visit</label>
+                        <input type="text" name="instant_reason" placeholder="e.g. Fever, Cough, Regular Follow-up" class="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg outline-none focus:border-medical-500">
+                    </div>
+                </div>
+            </div>
+
             <!-- Submit Button Bar -->
             <div class="pt-4 border-t border-slate-200 flex items-center justify-end gap-3">
                 <a href="index.php?page=patients" class="px-4 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg transition-colors">
@@ -220,4 +296,45 @@ $proposedMRN = 'MRN-' . date('Y') . '-' . $nextSeq;
             document.getElementById('ageInput').value = calculatedAge;
         }
     }
+
+    function toggleInstantBooking(isChecked) {
+        const fields = document.getElementById('instantBookingFields');
+        const docSelect = document.getElementById('instantDoctorSelect');
+        if (isChecked) {
+            fields.classList.remove('hidden');
+            docSelect.setAttribute('required', 'required');
+        } else {
+            fields.classList.add('hidden');
+            docSelect.removeAttribute('required');
+        }
+    }
+
+    // Debounce function for live duplicate lookup
+    let duplicateTimer = null;
+    function triggerDuplicateCheck() {
+        clearTimeout(duplicateTimer);
+        duplicateTimer = setTimeout(() => {
+            const phone = document.getElementById('phonePrimaryInput').value.trim();
+            const cnic = document.getElementById('nationalIdInput').value.trim();
+            if (phone.length < 5 && cnic.length < 5) return;
+
+            fetch(`index.php?action=check_patient_duplicate&phone=${encodeURIComponent(phone)}&cnic=${encodeURIComponent(cnic)}`)
+                .then(res => res.json())
+                .then(data => {
+                    const banner = document.getElementById('duplicateAlertBanner');
+                    if (data.exists && data.patient) {
+                        document.getElementById('dupPatientName').textContent = data.patient.name;
+                        document.getElementById('dupPatientMRN').textContent = data.patient.mrn;
+                        document.getElementById('dupPatientLink').href = `index.php?page=patient_profile&id=${data.patient.id}`;
+                        banner.classList.remove('hidden');
+                    } else {
+                        banner.classList.add('hidden');
+                    }
+                })
+                .catch(err => console.error('Duplicate check error:', err));
+        }, 400);
+    }
+
+    document.getElementById('phonePrimaryInput').addEventListener('input', triggerDuplicateCheck);
+    document.getElementById('nationalIdInput').addEventListener('input', triggerDuplicateCheck);
 </script>

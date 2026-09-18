@@ -136,6 +136,10 @@ $bills = $billsStmt->fetchAll();
 
             <!-- Quick Action Hotbuttons for This Patient -->
             <div class="flex flex-wrap items-center gap-2 self-start md:self-center">
+                <button onclick="document.getElementById('patientCardModal').classList.remove('hidden')" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5">
+                    <i class="fa-solid fa-id-card text-slate-500"></i>
+                    <span>Print Patient Card / Slip</span>
+                </button>
                 <a href="index.php?page=appointments&patient_id=<?= $patient['id'] ?>" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5">
                     <i class="fa-solid fa-calendar-plus text-slate-500"></i>
                     <span>Schedule Appt</span>
@@ -456,3 +460,112 @@ $bills = $billsStmt->fetchAll();
     <?php endif; ?>
 
 </div>
+
+<!-- Printable Patient Registration Card / Slip Modal -->
+<div id="patientCardModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 <?= !empty($_GET['registered']) ? '' : 'hidden' ?>">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 relative">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 no-print">
+            <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <i class="fa-solid fa-id-card text-medical-600"></i>
+                <span>Patient Registration Card / Slip</span>
+            </h3>
+            <button onclick="document.getElementById('patientCardModal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+        </div>
+
+        <!-- The Printable Slip Box -->
+        <div id="printableSlipArea" class="mt-4 p-5 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50/50 space-y-4 text-xs font-sans">
+            <!-- Hospital Header -->
+            <div class="text-center pb-3 border-b border-slate-200">
+                <div class="font-extrabold text-sm text-slate-900 tracking-tight uppercase"><?= APP_NAME ?></div>
+                <div class="text-[10px] text-slate-500 font-medium">Official Medical Patient Registration Card</div>
+                <div class="mt-2 inline-block px-3 py-1 bg-medical-700 text-white rounded font-mono font-bold text-sm tracking-wider">
+                    <?= htmlspecialchars($patient['mrn']) ?>
+                </div>
+            </div>
+
+            <!-- Patient Demographics Table -->
+            <div class="grid grid-cols-2 gap-y-2 gap-x-4 text-[11px]">
+                <div>
+                    <span class="text-slate-400 block text-[9px] uppercase">Full Name</span>
+                    <strong class="text-slate-900 font-bold"><?= htmlspecialchars($patient['first_name'] . ' ' . $patient['last_name']) ?></strong>
+                </div>
+                <div>
+                    <span class="text-slate-400 block text-[9px] uppercase">Blood Group</span>
+                    <strong class="text-rose-600 font-extrabold text-xs"><?= htmlspecialchars($patient['blood_group']) ?></strong>
+                </div>
+                <div>
+                    <span class="text-slate-400 block text-[9px] uppercase">Gender / Age</span>
+                    <span class="text-slate-800 font-medium"><?= htmlspecialchars($patient['gender']) ?> &bull; <?= $patient['age'] ?> Yrs</span>
+                </div>
+                <div>
+                    <span class="text-slate-400 block text-[9px] uppercase">Date of Birth</span>
+                    <span class="text-slate-800 font-medium"><?= format_date($patient['dob']) ?></span>
+                </div>
+                <div>
+                    <span class="text-slate-400 block text-[9px] uppercase">Contact Phone</span>
+                    <span class="font-mono text-slate-900 font-semibold"><?= htmlspecialchars($patient['phone_primary']) ?></span>
+                </div>
+                <div>
+                    <span class="text-slate-400 block text-[9px] uppercase">National ID / CNIC</span>
+                    <span class="font-mono text-slate-800"><?= htmlspecialchars($patient['national_id'] ?? 'N/A') ?></span>
+                </div>
+                <div class="col-span-2">
+                    <span class="text-slate-400 block text-[9px] uppercase">Residential City / Address</span>
+                    <span class="text-slate-800"><?= htmlspecialchars($patient['address'] . ', ' . $patient['city']) ?></span>
+                </div>
+                <div class="col-span-2 pt-2 border-t border-slate-200">
+                    <span class="text-slate-400 block text-[9px] uppercase">Emergency Next of Kin</span>
+                    <span class="text-slate-800 font-medium">
+                        <?= htmlspecialchars($patient['emergency_contact_name'] ?? 'None Recorded') ?> 
+                        (<?= htmlspecialchars($patient['emergency_contact_relation'] ?? '') ?>) &bull; <?= htmlspecialchars($patient['emergency_contact_phone'] ?? '') ?>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Barcode Placeholder & Footer Note -->
+            <div class="pt-3 border-t border-slate-200 text-center">
+                <div class="font-mono font-bold tracking-[0.25em] text-slate-800 text-xs uppercase py-1 bg-white border border-slate-200 rounded">
+                    |||| | ||||| || |||||| |||| |||
+                </div>
+                <div class="text-[9px] text-slate-400 mt-1.5 flex justify-between">
+                    <span>Issued: <?= format_datetime($patient['created_at']) ?></span>
+                    <span>Keep card safe for all visits</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="mt-4 pt-3 border-t border-slate-100 flex items-center justify-end gap-2 no-print">
+            <button type="button" onclick="document.getElementById('patientCardModal').classList.add('hidden')" class="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold">
+                Close
+            </button>
+            <button type="button" onclick="printPatientCard()" class="px-4 py-1.5 bg-medical-600 hover:bg-medical-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5">
+                <i class="fa-solid fa-print text-[11px]"></i>
+                <span>Print Card / Slip</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function printPatientCard() {
+    const printContent = document.getElementById('printableSlipArea').innerHTML;
+    const originalContent = document.body.innerHTML;
+    
+    const printWindow = window.open('', '', 'height=600,width=500');
+    printWindow.document.write('<html><head><title>Patient ID Card - <?= htmlspecialchars($patient['mrn']) ?></title>');
+    printWindow.document.write('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tailwindcss/typography@0.5.x/dist/typography.min.css">');
+    printWindow.document.write('<style>body{font-family: sans-serif; padding: 20px;} .barcode{letter-spacing: 4px; font-family: monospace; font-size: 16px;}</style>');
+    printWindow.document.write('</head><body>');
+    printWindow.document.write(printContent);
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+    }, 250);
+}
+</script>

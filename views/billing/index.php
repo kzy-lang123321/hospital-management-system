@@ -7,9 +7,10 @@ $db = Database::getConnection();
 $hProfile = hospital_profile();
 
 $selectedBillId = (int)($_GET['bill_id'] ?? 0);
+$search = trim($_GET['search'] ?? '');
 
-// Fetch All Bills
-$bills = $db->query("
+// Fetch All Bills with optional search filter
+$billSql = "
     SELECT b.*, e.encounter_number, e.encounter_type,
            p.id AS patient_id, p.mrn, p.first_name, p.last_name, p.phone_primary,
            u.full_name AS cashier_name
@@ -17,8 +18,17 @@ $bills = $db->query("
     JOIN `encounters` e ON b.encounter_id = e.id
     JOIN `patients` p ON b.patient_id = p.id
     JOIN `users` u ON b.created_by = u.id
-    ORDER BY b.id DESC
-")->fetchAll();
+";
+$params = [];
+if (!empty($search)) {
+    $billSql .= " WHERE (b.bill_number LIKE ? OR p.mrn LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR p.phone_primary LIKE ?) ";
+    $term = "%$search%";
+    $params = [$term, $term, $term, $term, $term];
+}
+$billSql .= " ORDER BY b.id DESC";
+$stmt = $db->prepare($billSql);
+$stmt->execute($params);
+$bills = $stmt->fetchAll();
 
 // If no bill selected, default to first bill if available
 if ($selectedBillId === 0 && !empty($bills)) {
@@ -85,10 +95,24 @@ if ($selectedBillId > 0) {
 
         <!-- Left 1 Col: Invoices Ledger Worklist -->
         <div class="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex flex-col h-[750px] overflow-hidden no-print">
-            <h3 class="font-bold text-slate-800 text-xs uppercase tracking-wider mb-3 pb-2 border-b border-slate-100 flex items-center justify-between">
+            <h3 class="font-bold text-slate-800 text-xs uppercase tracking-wider mb-2 pb-2 border-b border-slate-100 flex items-center justify-between">
                 <span>Invoices Ledger</span>
                 <span class="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono"><?= count($bills) ?></span>
             </h3>
+
+            <!-- Search Form -->
+            <div class="mb-3">
+                <form method="GET" action="index.php" class="relative">
+                    <input type="hidden" name="page" value="billing">
+                    <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Search INV-#, MRN, Name..." class="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-medical-500 outline-none transition-all">
+                    <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2.5 text-slate-400 text-xs"></i>
+                    <?php if (!empty($search)): ?>
+                    <a href="index.php?page=billing" class="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs" title="Clear Search">
+                        <i class="fa-solid fa-xmark"></i>
+                    </a>
+                    <?php endif; ?>
+                </form>
+            </div>
 
             <div class="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
                 <?php if (empty($bills)): ?>
@@ -194,7 +218,20 @@ if ($selectedBillId > 0) {
                             <?php foreach ($billItems as $item): ?>
                             <tr>
                                 <td class="py-2.5 font-medium text-slate-900"><?= htmlspecialchars($item['description']) ?></td>
-                                <td class="py-2.5 text-slate-500 text-[11px]"><?= htmlspecialchars($item['item_type']) ?></td>
+                                <td class="py-2.5">
+                                    <?php 
+                                    $catClasses = [
+                                        'Consultation' => 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                                        'Investigation' => 'bg-purple-50 text-purple-700 border-purple-200',
+                                        'Pharmacy' => 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                                        'Bed/Room' => 'bg-blue-50 text-blue-700 border-blue-200'
+                                    ];
+                                    $catClass = $catClasses[$item['item_type']] ?? 'bg-slate-50 text-slate-700 border-slate-200';
+                                    ?>
+                                    <span class="inline-block px-2 py-0.5 rounded text-[10px] font-semibold border <?= $catClass ?>">
+                                        <?= htmlspecialchars($item['item_type']) ?>
+                                    </span>
+                                </td>
                                 <td class="py-2.5 text-center font-mono"><?= $item['quantity'] ?></td>
                                 <td class="py-2.5 text-right font-mono text-slate-600"><?= format_currency($item['unit_price']) ?></td>
                                 <td class="py-2.5 text-right font-mono font-bold text-slate-900"><?= format_currency($item['net_price']) ?></td>

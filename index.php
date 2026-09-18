@@ -47,6 +47,51 @@ if ($action !== null) {
 
     $db = Database::getConnection();
 
+    // 2.5 AJAX: Duplicate Patient Detection Endpoint
+    if ($action === 'check_patient_duplicate') {
+        header('Content-Type: application/json');
+        $phone = clean_input($_GET['phone'] ?? $_POST['phone'] ?? '');
+        $cnic = clean_input($_GET['cnic'] ?? $_POST['cnic'] ?? '');
+
+        if (empty($phone) && empty($cnic)) {
+            echo json_encode(['exists' => false]);
+            exit;
+        }
+
+        $conditions = [];
+        $params = [];
+        if (!empty($phone)) {
+            $conditions[] = "phone_primary = ?";
+            $params[] = $phone;
+        }
+        if (!empty($cnic)) {
+            $conditions[] = "national_id = ?";
+            $params[] = $cnic;
+        }
+
+        $sql = "SELECT id, mrn, first_name, last_name, phone_primary, national_id, created_at FROM `patients` WHERE " . implode(' OR ', $conditions) . " LIMIT 1";
+        $dupStmt = $db->prepare($sql);
+        $dupStmt->execute($params);
+        $found = $dupStmt->fetch();
+
+        if ($found) {
+            echo json_encode([
+                'exists' => true,
+                'patient' => [
+                    'id' => $found['id'],
+                    'mrn' => $found['mrn'],
+                    'name' => $found['first_name'] . ' ' . $found['last_name'],
+                    'phone' => $found['phone_primary'],
+                    'national_id' => $found['national_id'],
+                    'registered_at' => date('d M Y', strtotime($found['created_at']))
+                ]
+            ]);
+        } else {
+            echo json_encode(['exists' => false]);
+        }
+        exit;
+    }
+
     // 3. Patient Registration Action
     if ($action === 'patient_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
@@ -100,11 +145,44 @@ if ($action !== null) {
                 $algStmt->execute([$newPatientId, $allergyType, $allergenName, $allergySeverity, Auth::id()]);
             }
 
+            // Check if instant appointment booking was requested
+            $bookNow = !empty($_POST['book_appointment_now']);
+            $newAptId = 0;
+            if ($bookNow) {
+                $docId = (int)($_POST['instant_doctor_id'] ?? 0);
+                $aptDate = clean_input($_POST['instant_appointment_date'] ?? date('Y-m-d'));
+                $slotTime = clean_input($_POST['instant_slot_time'] ?? '10:00:00');
+                $visitReason = clean_input($_POST['instant_reason'] ?? 'Initial Consultation');
+
+                if ($docId > 0) {
+                    $docDept = $db->prepare("SELECT department_id FROM `users` WHERE `id` = ?");
+                    $docDept->execute([$docId]);
+                    $deptId = (int)$docDept->fetchColumn();
+
+                    $tokenStmt = $db->prepare("SELECT COALESCE(MAX(token_number), 0) FROM `appointments` WHERE `doctor_id` = ? AND `appointment_date` = ?");
+                    $tokenStmt->execute([$docId, $aptDate]);
+                    $tokenNum = (int)$tokenStmt->fetchColumn() + 1;
+
+                    $aptNum = 'APT-' . date('Ymd') . '-' . str_pad((string)$tokenNum, 3, '0', STR_PAD_LEFT);
+                    $insApt = $db->prepare("
+                        INSERT INTO `appointments` 
+                        (`appointment_number`, `patient_id`, `doctor_id`, `department_id`, `appointment_date`, `slot_time`, `token_number`, `type`, `status`, `reason_for_visit`, `created_by`)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'New', 'Scheduled', ?, ?)
+                    ");
+                    $insApt->execute([$aptNum, $newPatientId, $docId, $deptId, $aptDate, $slotTime, $tokenNum, $visitReason, Auth::id()]);
+                    $newAptId = (int)$db->lastInsertId();
+                }
+            }
+
             AuditLogger::log('CREATE', 'patients', $newPatientId, null, ['mrn' => $mrn, 'name' => "$firstName $lastName"]);
             $db->commit();
 
-            set_flash('success', "Patient record registered successfully with unique MRN: $mrn");
-            header("Location: index.php?page=patient_profile&id=" . $newPatientId);
+            set_flash('success', "Patient record registered successfully with unique MRN: $mrn" . ($newAptId > 0 ? " and booked for consultation." : ""));
+            $redirectUrl = "index.php?page=patient_profile&id=" . $newPatientId . "&registered=1";
+            if ($newAptId > 0) {
+                $redirectUrl .= "&apt_id=" . $newAptId;
+            }
+            header("Location: " . $redirectUrl);
             exit;
         } catch (Exception $e) {
             $db->rollBack();
@@ -145,9 +223,10 @@ if ($action !== null) {
         ");
         $stmt->execute([$aptNum, $patientId, $doctorId, $deptId, $appointmentDate, $slotTime, $tokenNumber, $type, $reason, Auth::id()]);
 
-        AuditLogger::log('CREATE', 'appointments', $db->lastInsertId(), null, ['apt_number' => $aptNum]);
+        $newAptId = (int)$db->lastInsertId();
+        AuditLogger::log('CREATE', 'appointments', $newAptId, null, ['apt_number' => $aptNum]);
         set_flash('success', "Appointment booked successfully with Token #$tokenNumber ($aptNum).");
-        header("Location: index.php?page=appointments&date=" . $appointmentDate);
+        header("Location: index.php?page=appointments&date=" . $appointmentDate . "&print_token=" . $newAptId);
         exit;
     }
 
@@ -224,12 +303,34 @@ if ($action !== null) {
             $delNote = $db->prepare("DELETE FROM `consultation_notes` WHERE `encounter_id` = ?");
             $delNote->execute([$encounterId]);
 
+            $followUpDate = !empty($_POST['follow_up_date']) ? clean_input($_POST['follow_up_date']) : null;
+            $followUpNotes = clean_input($_POST['follow_up_notes'] ?? '');
+
             $noteStmt = $db->prepare("
                 INSERT INTO `consultation_notes` 
-                (`encounter_id`, `doctor_id`, `chief_complaint`, `physical_examination`, `provisional_diagnosis`, `icd10_code`, `clinical_advice`)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (`encounter_id`, `doctor_id`, `chief_complaint`, `physical_examination`, `provisional_diagnosis`, `icd10_code`, `clinical_advice`, `follow_up_date`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ");
-            $noteStmt->execute([$encounterId, Auth::id(), $chiefComplaint, $physicalExam, $diagnosis, $icdCode, $clinicalAdvice]);
+            $noteStmt->execute([$encounterId, Auth::id(), $chiefComplaint, $physicalExam, $diagnosis, $icdCode, $clinicalAdvice, $followUpDate]);
+
+            // Auto-schedule Follow-up Appointment if date provided
+            if ($followUpDate) {
+                $docDeptStmt = $db->prepare("SELECT department_id FROM `users` WHERE `id` = ?");
+                $docDeptStmt->execute([Auth::id()]);
+                $fDeptId = (int)$docDeptStmt->fetchColumn();
+
+                $fTokenStmt = $db->prepare("SELECT COALESCE(MAX(token_number), 0) FROM `appointments` WHERE `doctor_id` = ? AND `appointment_date` = ?");
+                $fTokenStmt->execute([Auth::id(), $followUpDate]);
+                $fTokenNum = (int)$fTokenStmt->fetchColumn() + 1;
+
+                $fAptNum = 'APT-' . str_replace('-', '', $followUpDate) . '-' . str_pad((string)$fTokenNum, 3, '0', STR_PAD_LEFT);
+                $fAptStmt = $db->prepare("
+                    INSERT INTO `appointments` 
+                    (`appointment_number`, `patient_id`, `doctor_id`, `department_id`, `appointment_date`, `slot_time`, `token_number`, `type`, `status`, `reason_for_visit`, `created_by`)
+                    VALUES (?, ?, ?, ?, ?, '10:00:00', ?, 'Follow-up', 'Scheduled', ?, ?)
+                ");
+                $fAptStmt->execute([$fAptNum, $patientId, Auth::id(), $fDeptId, $followUpDate, $fTokenNum, !empty($followUpNotes) ? $followUpNotes : "Follow-up for $diagnosis", Auth::id()]);
+            }
 
             // 3. Save Prescriptions if any drug chosen
             $rxDrugs = $_POST['rx_drug_id'] ?? [];
@@ -275,6 +376,7 @@ if ($action !== null) {
 
             // 4. Save Lab Orders if selected
             $labTestsChosen = $_POST['lab_test_ids'] ?? [];
+            $totalLabCost = 0.0;
             if (!empty($labTestsChosen)) {
                 $latestLab = $db->query("SELECT COALESCE(MAX(id), 0) FROM `lab_orders`")->fetchColumn();
                 $labOrderNum = 'LAB-' . date('Y') . '-' . str_pad((string)($latestLab + 1), 4, '0', STR_PAD_LEFT);
@@ -301,10 +403,13 @@ if ($action !== null) {
             ");
             $encUpdate->execute([$diagnosis, $encStatus, $disposition, $encStatus, $encounterId]);
 
-            // 6. Create Initial Bill if not already generated
+            // 6. Create / Update Bill with Consultation & Lab charges
             $billCheck = $db->prepare("SELECT id FROM `bills` WHERE `encounter_id` = ?");
             $billCheck->execute([$encounterId]);
-            if (!$billCheck->fetch()) {
+            $existingBill = $billCheck->fetch();
+
+            $targetBillId = 0;
+            if (!$existingBill) {
                 $docFeeStmt = $db->prepare("SELECT consultation_fee FROM `users` WHERE `id` = ?");
                 $docFeeStmt->execute([Auth::id()]);
                 $docFee = (float)$docFeeStmt->fetchColumn();
@@ -318,20 +423,48 @@ if ($action !== null) {
                     VALUES (?, ?, ?, 'OPD', NOW(), ?, ?, 0.00, ?, 'Unpaid', ?)
                 ");
                 $billInsert->execute([$billNum, $encounterId, $patientId, $docFee, $docFee, $docFee, Auth::id()]);
-                $newBillId = (int)$db->lastInsertId();
+                $targetBillId = (int)$db->lastInsertId();
 
                 $billItemInsert = $db->prepare("
                     INSERT INTO `bill_items` (`bill_id`, `item_type`, `description`, `quantity`, `unit_price`, `subtotal`, `net_price`)
-                    VALUES (?, 'Consultation', 'Specialist Doctor Consultation', 1, ?, ?, ?)
+                    VALUES (?, 'Consultation', 'Specialist Doctor Consultation Fee', 1, ?, ?, ?)
                 ");
-                $billItemInsert->execute([$newBillId, $docFee, $docFee, $docFee]);
+                $billItemInsert->execute([$targetBillId, $docFee, $docFee, $docFee]);
+            } else {
+                $targetBillId = (int)$existingBill['id'];
+            }
+
+            // Append lab items to bill if any were ordered
+            if ($targetBillId > 0 && !empty($labTestsChosen)) {
+                $ltPriceStmt = $db->prepare("SELECT test_name, standard_price FROM `lab_tests` WHERE `id` = ?");
+                $bItemStmt = $db->prepare("
+                    INSERT INTO `bill_items` (`bill_id`, `item_type`, `reference_id`, `description`, `quantity`, `unit_price`, `subtotal`, `net_price`)
+                    VALUES (?, 'Investigation', ?, ?, 1, ?, ?, ?)
+                ");
+                foreach ($labTestsChosen as $ltId) {
+                    $ltPriceStmt->execute([(int)$ltId]);
+                    $ltData = $ltPriceStmt->fetch();
+                    if ($ltData) {
+                        $price = (float)$ltData['standard_price'];
+                        $totalLabCost += $price;
+                        $bItemStmt->execute([$targetBillId, (int)$ltId, 'Lab Test: ' . $ltData['test_name'], $price, $price, $price]);
+                    }
+                }
+                if ($totalLabCost > 0) {
+                    $upBill = $db->prepare("
+                        UPDATE `bills` 
+                        SET `gross_amount` = `gross_amount` + ?, `net_amount` = `net_amount` + ?, `balance_amount` = `balance_amount` + ? 
+                        WHERE `id` = ?
+                    ");
+                    $upBill->execute([$totalLabCost, $totalLabCost, $totalLabCost, $targetBillId]);
+                }
             }
 
             AuditLogger::log('UPDATE', 'encounters', $encounterId, null, ['diagnosis' => $diagnosis, 'status' => $encStatus]);
             $db->commit();
 
-            set_flash('success', "Consultation completed and clinical orders processed successfully.");
-            header("Location: index.php?page=opd_consultation");
+            set_flash('success', "Consultation completed and clinical orders executed successfully.");
+            header("Location: index.php?page=opd_consultation&encounter_id=" . $encounterId . "&print_rx=1");
             exit;
         } catch (Exception $e) {
             $db->rollBack();
@@ -464,13 +597,18 @@ if ($action !== null) {
             $db->beginTransaction();
 
             $itemsStmt = $db->prepare("SELECT * FROM `prescription_items` WHERE `prescription_id` = ?");
-            $itemsStmt->execute([$rxId]);
-            $items = $itemsStmt->fetchAll();
+            // Fetch encounter and patient for this prescription
+            $encRxStmt = $db->prepare("SELECT p.encounter_id, e.patient_id FROM `prescriptions` p JOIN `encounters` e ON p.encounter_id = e.id WHERE p.id = ?");
+            $encRxStmt->execute([$rxId]);
+            $rxEncData = $encRxStmt->fetch();
+
+            $totalPharmacyCost = 0.0;
+            $dispensedBatchItems = [];
 
             foreach ($items as $item) {
                 // Find batch with earliest expiry that has stock (FEFO)
                 $batchStmt = $db->prepare("
-                    SELECT id, current_quantity, unit_sale_price 
+                    SELECT id, batch_number, current_quantity, unit_sale_price 
                     FROM `drug_batches` 
                     WHERE `drug_item_id` = ? AND `current_quantity` > 0 
                     ORDER BY `expiry_date` ASC 
@@ -490,6 +628,64 @@ if ($action !== null) {
                     // Update prescription item quantity dispensed
                     $upItem = $db->prepare("UPDATE `prescription_items` SET `quantity_dispensed` = ? WHERE `id` = ?");
                     $upItem->execute([$dispenseQty, $item['id']]);
+
+                    $itemCost = $dispenseQty * (float)$batch['unit_sale_price'];
+                    $totalPharmacyCost += $itemCost;
+                    $dispensedBatchItems[] = [
+                        'drug_item_id' => $item['drug_item_id'],
+                        'batch_id' => $batch['id'],
+                        'batch_number' => $batch['batch_number'],
+                        'quantity' => $dispenseQty,
+                        'unit_price' => (float)$batch['unit_sale_price'],
+                        'subtotal' => $itemCost
+                    ];
+                }
+            }
+
+            // Post to Centralized Billing Ledger
+            if ($rxEncData && $totalPharmacyCost > 0) {
+                $pEncId = (int)$rxEncData['encounter_id'];
+                $pPatId = (int)$rxEncData['patient_id'];
+
+                $bStmt = $db->prepare("SELECT id FROM `bills` WHERE `encounter_id` = ? ORDER BY id DESC LIMIT 1");
+                $bStmt->execute([$pEncId]);
+                $existingBill = $bStmt->fetch();
+
+                $targetBillId = 0;
+                if (!$existingBill) {
+                    $latestBill = $db->query("SELECT COALESCE(MAX(id), 0) FROM `bills`")->fetchColumn();
+                    $billNum = 'INV-' . date('Y') . '-' . str_pad((string)($latestBill + 1), 4, '0', STR_PAD_LEFT);
+                    $insBill = $db->prepare("
+                        INSERT INTO `bills` 
+                        (`bill_number`, `encounter_id`, `patient_id`, `bill_type`, `bill_date`, `gross_amount`, `net_amount`, `paid_amount`, `balance_amount`, `payment_status`, `created_by`)
+                        VALUES (?, ?, ?, 'Pharmacy', NOW(), 0, 0, 0, 0, 'Unpaid', ?)
+                    ");
+                    $insBill->execute([$billNum, $pEncId, $pPatId, Auth::id()]);
+                    $targetBillId = (int)$db->lastInsertId();
+                } else {
+                    $targetBillId = (int)$existingBill['id'];
+                }
+
+                if ($targetBillId > 0) {
+                    $insBItem = $db->prepare("
+                        INSERT INTO `bill_items` (`bill_id`, `item_type`, `reference_id`, `description`, `quantity`, `unit_price`, `subtotal`, `net_price`)
+                        VALUES (?, 'Pharmacy', ?, ?, ?, ?, ?, ?)
+                    ");
+                    $dNameStmt = $db->prepare("SELECT brand_name FROM `drug_items` WHERE `id` = ?");
+
+                    foreach ($dispensedBatchItems as $dbi) {
+                        $dNameStmt->execute([$dbi['drug_item_id']]);
+                        $dName = $dNameStmt->fetchColumn() ?: 'Medication';
+                        $desc = "Pharmacy: $dName (Batch #{$dbi['batch_number']})";
+                        $insBItem->execute([$targetBillId, $dbi['batch_id'], $desc, $dbi['quantity'], $dbi['unit_price'], $dbi['subtotal'], $dbi['subtotal']]);
+                    }
+
+                    $upBill = $db->prepare("
+                        UPDATE `bills` 
+                        SET `gross_amount` = `gross_amount` + ?, `net_amount` = `net_amount` + ?, `balance_amount` = `balance_amount` + ? 
+                        WHERE `id` = ?
+                    ");
+                    $upBill->execute([$totalPharmacyCost, $totalPharmacyCost, $totalPharmacyCost, $targetBillId]);
                 }
             }
 
@@ -497,11 +693,11 @@ if ($action !== null) {
             $rxUp = $db->prepare("UPDATE `prescriptions` SET `status` = 'Dispensed' WHERE `id` = ?");
             $rxUp->execute([$rxId]);
 
-            AuditLogger::log('UPDATE', 'prescriptions', $rxId, null, ['status' => 'Dispensed']);
+            AuditLogger::log('UPDATE', 'prescriptions', $rxId, null, ['status' => 'Dispensed', 'total_cost' => $totalPharmacyCost]);
             $db->commit();
 
-            set_flash('success', "Prescription verified and medications dispensed from FEFO inventory batches.");
-            header("Location: index.php?page=pharmacy");
+            set_flash('success', "Prescription verified and medications dispensed from FEFO inventory batches. Charges posted to billing ledger.");
+            header("Location: index.php?page=pharmacy&print_receipt=" . $rxId);
             exit;
         } catch (Exception $e) {
             $db->rollBack();
