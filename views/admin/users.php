@@ -55,7 +55,7 @@ $roleBadges = [
                 <span class="text-xs text-slate-300">Multi-User Account Governance Active</span>
             </div>
             <p class="text-xs text-slate-300">
-                Admins can create accounts for any department. Default password for all seed accounts is <code class="px-1.5 py-0.5 bg-white/10 rounded font-mono text-medical-300 font-bold">Admin@123</code>.
+                Hospital department management accounts are active with name-based random passwords. Administrators can add new staff or reset passwords anytime using the <span class="text-amber-300 font-semibold"><i class="fa-solid fa-key"></i> Reset Key</span> action.
             </p>
         </div>
         <div class="flex items-center gap-2 flex-wrap text-[11px]">
@@ -63,6 +63,7 @@ $roleBadges = [
             <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">💊 Pharm: @pharm.kamran</span>
             <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">🩻 Radio: @radio.farooq</span>
             <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">🩺 OPD: @dr.tariq</span>
+            <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">🔪 OT: @dr.imran</span>
             <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">🏥 Ward: @nurse.fatima</span>
             <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">💵 Cashier: @cashier.hassan</span>
         </div>
