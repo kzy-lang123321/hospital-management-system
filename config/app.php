@@ -120,3 +120,41 @@ function format_date($dt): string {
 function clean_input($data): string {
     return htmlspecialchars(trim((string)$data), ENT_QUOTES, 'UTF-8');
 }
+
+/**
+ * Generate a guaranteed unique Appointment Reference Number (e.g. APT-20260918-0005)
+ */
+function generate_appointment_number(PDO $db, string $dateStr = ''): string {
+    $datePrefix = !empty($dateStr) ? date('Ymd', strtotime($dateStr)) : date('Ymd');
+    $latestId = (int)$db->query("SELECT COALESCE(MAX(id), 0) FROM `appointments`")->fetchColumn();
+    $seq = $latestId + 1;
+    $aptNum = 'APT-' . $datePrefix . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+    
+    $check = $db->prepare("SELECT COUNT(*) FROM `appointments` WHERE `appointment_number` = ?");
+    $check->execute([$aptNum]);
+    while ((int)$check->fetchColumn() > 0) {
+        $seq++;
+        $aptNum = 'APT-' . $datePrefix . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+        $check->execute([$aptNum]);
+    }
+    return $aptNum;
+}
+
+/**
+ * Generate a guaranteed unique Patient MRN (e.g. MRN-2026-0003)
+ */
+function generate_patient_mrn(PDO $db): string {
+    $latestId = (int)$db->query("SELECT COALESCE(MAX(id), 0) FROM `patients`")->fetchColumn();
+    $seq = $latestId + 1;
+    $mrn = 'MRN-' . date('Y') . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+    
+    $check = $db->prepare("SELECT COUNT(*) FROM `patients` WHERE `mrn` = ?");
+    $check->execute([$mrn]);
+    while ((int)$check->fetchColumn() > 0) {
+        $seq++;
+        $mrn = 'MRN-' . date('Y') . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+        $check->execute([$mrn]);
+    }
+    return $mrn;
+}
+

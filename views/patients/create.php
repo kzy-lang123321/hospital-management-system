@@ -6,9 +6,7 @@ require_once __DIR__ . '/../../config/database.php';
 $db = Database::getConnection();
 
 // Calculate next sequence MRN
-$latestId = $db->query("SELECT COALESCE(MAX(id), 0) FROM `patients`")->fetchColumn();
-$nextSeq = str_pad((string)($latestId + 1), 4, '0', STR_PAD_LEFT);
-$proposedMRN = 'MRN-' . date('Y') . '-' . $nextSeq;
+$proposedMRN = generate_patient_mrn($db);
 
 // Fetch active doctors for instant appointment booking
 $doctors = $db->query("

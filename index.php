@@ -134,8 +134,7 @@ if ($action !== null) {
         $emergencyPhone = clean_input($_POST['emergency_contact_phone'] ?? '');
 
         // Generate next MRN atomically
-        $latestId = $db->query("SELECT COALESCE(MAX(id), 0) FROM `patients`")->fetchColumn();
-        $mrn = 'MRN-' . date('Y') . '-' . str_pad((string)($latestId + 1), 4, '0', STR_PAD_LEFT);
+        $mrn = generate_patient_mrn($db);
 
         try {
             $db->beginTransaction();
@@ -182,7 +181,7 @@ if ($action !== null) {
                     $tokenStmt->execute([$docId, $aptDate]);
                     $tokenNum = (int)$tokenStmt->fetchColumn() + 1;
 
-                    $aptNum = 'APT-' . date('Ymd') . '-' . str_pad((string)$tokenNum, 3, '0', STR_PAD_LEFT);
+                    $aptNum = generate_appointment_number($db, $aptDate);
                     $insApt = $db->prepare("
                         INSERT INTO `appointments` 
                         (`appointment_number`, `patient_id`, `doctor_id`, `department_id`, `appointment_date`, `slot_time`, `token_number`, `type`, `status`, `reason_for_visit`, `created_by`)
@@ -233,7 +232,7 @@ if ($action !== null) {
         $tokenStmt->execute([$doctorId, $appointmentDate]);
         $tokenNumber = (int)$tokenStmt->fetchColumn() + 1;
 
-        $aptNum = 'APT-' . date('Ymd') . '-' . str_pad((string)$tokenNumber, 3, '0', STR_PAD_LEFT);
+        $aptNum = generate_appointment_number($db, $appointmentDate);
 
         $stmt = $db->prepare("
             INSERT INTO `appointments` 
@@ -342,7 +341,7 @@ if ($action !== null) {
                 $fTokenStmt->execute([Auth::id(), $followUpDate]);
                 $fTokenNum = (int)$fTokenStmt->fetchColumn() + 1;
 
-                $fAptNum = 'APT-' . str_replace('-', '', $followUpDate) . '-' . str_pad((string)$fTokenNum, 3, '0', STR_PAD_LEFT);
+                $fAptNum = generate_appointment_number($db, $followUpDate);
                 $fAptStmt = $db->prepare("
                     INSERT INTO `appointments` 
                     (`appointment_number`, `patient_id`, `doctor_id`, `department_id`, `appointment_date`, `slot_time`, `token_number`, `type`, `status`, `reason_for_visit`, `created_by`)
