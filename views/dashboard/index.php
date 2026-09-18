@@ -40,6 +40,47 @@ $wardSummary = $db->query("
     LEFT JOIN `beds` b ON r.id = b.room_id
     GROUP BY w.id
 ")->fetchAll();
+
+// 4. Strictly Pharmacy Patients: Prescriptions & Dispensation Receipts Review
+$pharmacyReviews = $db->query("
+    SELECT 
+        pr.id AS prescription_id,
+        pr.prescription_number,
+        pr.status AS rx_status,
+        pr.created_at AS rx_date,
+        p.id AS patient_id,
+        p.mrn,
+        p.first_name,
+        p.last_name,
+        p.gender,
+        p.age,
+        p.phone_primary,
+        doc.full_name AS doctor_name,
+        ps.id AS sale_id,
+        ps.sale_invoice_number,
+        ps.net_total AS sale_net_total,
+        ps.created_at AS sale_date,
+        ps.payment_method,
+        u.full_name AS pharmacist_name,
+        (SELECT COUNT(*) FROM `prescription_items` WHERE `prescription_id` = pr.id) AS total_prescribed_items,
+        (SELECT GROUP_CONCAT(CONCAT(di.brand_name, ' (', pi.dosage, ')') SEPARATOR ', ')
+         FROM `prescription_items` pi
+         JOIN `drug_items` di ON pi.drug_item_id = di.id
+         WHERE pi.prescription_id = pr.id) AS rx_medications,
+        (SELECT b.bill_number 
+         FROM `bills` b 
+         JOIN `bill_items` bi ON bi.bill_id = b.id 
+         WHERE b.encounter_id = pr.encounter_id AND bi.item_type = 'Medication' 
+         LIMIT 1) AS linked_bill_number
+    FROM `prescriptions` pr
+    JOIN `encounters` e ON pr.encounter_id = e.id
+    JOIN `patients` p ON e.patient_id = p.id
+    JOIN `users` doc ON pr.doctor_id = doc.id
+    LEFT JOIN `pharmacy_sales` ps ON ps.prescription_id = pr.id
+    LEFT JOIN `users` u ON ps.dispensed_by = u.id
+    ORDER BY pr.id DESC
+    LIMIT 10
+")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
@@ -286,6 +327,141 @@ $wardSummary = $db->query("
 
         </div>
 
+    </div>
+
+    <!-- Pharmacy Patient Dispensation & Receipt Review Section (Strictly Pharmacy Patients) -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gradient-to-r from-teal-50/70 to-emerald-50/40">
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-teal-500 animate-pulse"></span>
+                    <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+                        <i class="fa-solid fa-receipt text-teal-600"></i>
+                        <span>Pharmacy Patient Dispensation &amp; Receipt Review</span>
+                    </h3>
+                </div>
+                <p class="text-xs text-slate-500 mt-0.5">Real-time pharmacy-dispensed and prescribed patient receipts, FEFO deductions, and billing audit</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <a href="index.php?page=pharmacy&tab=queue" class="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5 transition-colors">
+                    <i class="fa-solid fa-prescription"></i>
+                    <span>Open Dispensing Queue</span>
+                </a>
+                <a href="index.php?page=pharmacy&tab=stock" class="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5">
+                    <i class="fa-solid fa-boxes-stacked text-teal-600"></i>
+                    <span>Formulary Batches</span>
+                </a>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-600 font-semibold uppercase tracking-wider text-[10px] border-b border-slate-100">
+                    <tr>
+                        <th class="px-6 py-3">Patient (Pharmacy Only)</th>
+                        <th class="px-4 py-3">Prescription #</th>
+                        <th class="px-4 py-3">Receipt / Invoice #</th>
+                        <th class="px-4 py-3">Prescribed Regimen</th>
+                        <th class="px-4 py-3">Attending / Pharmacist</th>
+                        <th class="px-4 py-3">Total Amount</th>
+                        <th class="px-4 py-3">Dispense Status</th>
+                        <th class="px-6 py-3 text-right">Review Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    <?php if (empty($pharmacyReviews)): ?>
+                    <tr>
+                        <td colspan="8" class="px-6 py-8 text-center text-slate-400">
+                            <i class="fa-solid fa-file-prescription text-2xl mb-2 text-slate-300"></i>
+                            <p>No pharmacy patient transactions recorded yet.</p>
+                        </td>
+                    </tr>
+                    <?php else: ?>
+                    <?php foreach ($pharmacyReviews as $rx): 
+                        $isDisp = ($rx['rx_status'] === 'Dispensed');
+                    ?>
+                    <tr class="hover:bg-slate-50/80 transition-colors">
+                        <td class="px-6 py-3.5">
+                            <div class="font-bold text-slate-900">
+                                <a href="index.php?page=patient_profile&id=<?= $rx['patient_id'] ?>" class="hover:text-teal-700">
+                                    <?= htmlspecialchars($rx['first_name'] . ' ' . $rx['last_name']) ?>
+                                </a>
+                            </div>
+                            <div class="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                                <span class="font-mono text-teal-700 font-semibold"><?= htmlspecialchars($rx['mrn']) ?></span>
+                                <span>&bull;</span>
+                                <span><?= htmlspecialchars($rx['gender']) ?>, <?= $rx['age'] ?>y</span>
+                            </div>
+                        </td>
+                        <td class="px-4 py-3.5 font-mono text-slate-800 font-semibold">
+                            <?= htmlspecialchars($rx['prescription_number']) ?>
+                            <div class="text-[10px] text-slate-400 font-normal"><?= date('d M Y, h:i A', strtotime($rx['rx_date'])) ?></div>
+                        </td>
+                        <td class="px-4 py-3.5 font-mono">
+                            <?php if (!empty($rx['sale_invoice_number'])): ?>
+                                <span class="font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
+                                    <?= htmlspecialchars($rx['sale_invoice_number']) ?>
+                                </span>
+                            <?php elseif (!empty($rx['linked_bill_number'])): ?>
+                                <span class="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                                    <?= htmlspecialchars($rx['linked_bill_number']) ?>
+                                </span>
+                            <?php else: ?>
+                                <span class="text-slate-400 text-[11px] italic">Pending Sale</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="px-4 py-3.5 max-w-xs truncate">
+                            <div class="text-slate-800 font-medium truncate" title="<?= htmlspecialchars($rx['rx_medications'] ?? 'None') ?>">
+                                <?= htmlspecialchars($rx['rx_medications'] ?? 'No items listed') ?>
+                            </div>
+                            <div class="text-[10px] text-slate-400 mt-0.5">
+                                <?= (int)$rx['total_prescribed_items'] ?> item(s) prescribed
+                            </div>
+                        </td>
+                        <td class="px-4 py-3.5">
+                            <div class="text-slate-700 font-medium"><?= htmlspecialchars($rx['doctor_name']) ?></div>
+                            <?php if (!empty($rx['pharmacist_name'])): ?>
+                                <div class="text-[10px] text-teal-700 flex items-center gap-1 mt-0.5 font-medium">
+                                    <i class="fa-solid fa-user-check text-[9px]"></i>
+                                    <span><?= htmlspecialchars($rx['pharmacist_name']) ?></span>
+                                </div>
+                            <?php else: ?>
+                                <div class="text-[10px] text-amber-600 mt-0.5">Awaiting Dispenser</div>
+                            <?php endif; ?>
+                        </td>
+                        <td class="px-4 py-3.5 font-bold font-mono text-slate-900">
+                            <?php if (!empty($rx['sale_net_total'])): ?>
+                                <span class="text-emerald-700"><?= format_currency($rx['sale_net_total']) ?></span>
+                            <?php else: ?>
+                                <span class="text-slate-400 font-normal">Calculated on Dispense</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="px-4 py-3.5">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold <?= $isDisp ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-amber-100 text-amber-800 border border-amber-200' ?>">
+                                <i class="fa-solid <?= $isDisp ? 'fa-circle-check' : 'fa-clock' ?> mr-1 text-[9px]"></i>
+                                <?= htmlspecialchars($rx['rx_status']) ?>
+                            </span>
+                        </td>
+                        <td class="px-6 py-3.5 text-right whitespace-nowrap">
+                            <div class="flex items-center justify-end gap-2">
+                                <a href="index.php?page=pharmacy&tab=queue&print_receipt=<?= $rx['prescription_id'] ?>" class="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded font-semibold text-xs flex items-center gap-1 transition-colors" title="Review Two-Part Dispensing Receipt">
+                                    <i class="fa-solid fa-receipt text-[11px] text-teal-600"></i>
+                                    <span>Review Receipt</span>
+                                </a>
+                                <?php if (!$isDisp): ?>
+                                <a href="index.php?page=pharmacy&tab=queue&search=<?= urlencode($rx['mrn']) ?>" class="px-2.5 py-1 bg-medical-600 hover:bg-medical-700 text-white rounded font-bold text-xs flex items-center gap-1 transition-colors">
+                                    <i class="fa-solid fa-box-open text-[10px]"></i>
+                                    <span>Dispense</span>
+                                </a>
+                                <?php endif; ?>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
     </div>
 
 </div>

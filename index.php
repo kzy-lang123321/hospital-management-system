@@ -45,7 +45,24 @@ if ($action !== null) {
     // ALL SUBSEQUENT ACTIONS REQUIRE AUTHENTICATION
     Auth::requireLogin();
 
-    $db = Database::getConnection();
+    // 2.4 Download Official Credentials PDF Action
+    if ($action === 'download_credentials_pdf') {
+        Auth::requireRole(['super_admin', 'hospital_admin']);
+        require_once __DIR__ . '/core/PdfCredentials.php';
+        
+        $pdfPath = __DIR__ . '/exports/Hospital_Management_Credentials.pdf';
+        if (!file_exists($pdfPath)) {
+            $credsFile = __DIR__ . '/scripts/management_credentials.json';
+            $creds = file_exists($credsFile) ? json_decode(file_get_contents($credsFile), true) : [];
+            PdfCredentials::generate($creds, $pdfPath);
+        }
+        
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="Hospital_Management_Credentials.pdf"');
+        header('Content-Length: ' . filesize($pdfPath));
+        readfile($pdfPath);
+        exit;
+    }
 
     // 2.5 AJAX: Duplicate Patient Detection Endpoint
     if ($action === 'check_patient_duplicate') {
@@ -1630,21 +1647,30 @@ if ($action !== null) {
         Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist']);
 
         $name = clean_input($_POST['item_name'] ?? '');
+        $genericName = clean_input($_POST['generic_name'] ?? '');
+        $dosageForm = clean_input($_POST['dosage_form'] ?? 'Tablets');
         $code = clean_input($_POST['item_code'] ?? '');
         $catId = (int)($_POST['category_id'] ?? 1);
-        $uom = clean_input($_POST['unit_of_measure'] ?? 'Box');
+        $uom = clean_input($_POST['unit_of_measure'] ?? 'Pack');
         $stock = (int)($_POST['current_stock'] ?? 0);
         $reorder = (int)($_POST['reorder_level'] ?? 20);
         $cost = (float)($_POST['unit_cost_price'] ?? 0.00);
+        $salePrice = (float)($_POST['unit_sale_price'] ?? 0.00);
+        $isNarcotic = !empty($_POST['is_narcotic']) ? 1 : 0;
+        $narcoticSchedule = !empty($_POST['narcotic_schedule']) ? clean_input($_POST['narcotic_schedule']) : null;
+        $storageCondition = clean_input($_POST['storage_condition'] ?? 'Room Temperature (15-25°C)');
+        $batchNumber = clean_input($_POST['batch_number'] ?? '');
+        $expiryDate = !empty($_POST['expiry_date']) ? clean_input($_POST['expiry_date']) : null;
 
         $stmt = $db->prepare("
-            INSERT INTO `inventory_items` (`category_id`, `item_name`, `item_code`, `unit_of_measure`, `current_stock`, `reorder_level`, `unit_cost_price`)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO `inventory_items` 
+            (`category_id`, `item_name`, `generic_name`, `dosage_form`, `is_narcotic`, `narcotic_schedule`, `storage_condition`, `batch_number`, `expiry_date`, `item_code`, `unit_of_measure`, `current_stock`, `reorder_level`, `unit_cost_price`, `unit_sale_price`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
-        $stmt->execute([$catId, $name, $code, $uom, $stock, $reorder, $cost]);
+        $stmt->execute([$catId, $name, $genericName, $dosageForm, $isNarcotic, $narcoticSchedule, $storageCondition, $batchNumber, $expiryDate, $code, $uom, $stock, $reorder, $cost, $salePrice]);
 
-        AuditLogger::log('CREATE', 'inventory_items', $db->lastInsertId(), null, ['name' => $name, 'code' => $code]);
-        set_flash('success', "Consumable item '$name' ($code) added to catalog.");
+        AuditLogger::log('CREATE', 'inventory_items', $db->lastInsertId(), null, ['name' => $name, 'code' => $code, 'is_narcotic' => $isNarcotic]);
+        set_flash('success', "Item '$name' ($code) added to inventory catalog with batch tracking.");
         header("Location: index.php?page=inventory&tab=stock");
         exit;
     }
@@ -1755,6 +1781,254 @@ if ($action !== null) {
         }
     }
 
+    // Pharmacy Dispense Action with Automatic FEFO Stock Deduction & Invoicing
+    if ($action === 'pharmacy_dispense' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist', 'doctor']);
+
+        $rxId = (int)($_POST['prescription_id'] ?? 0);
+        if ($rxId <= 0) {
+            set_flash('danger', 'Invalid prescription ID.');
+            header("Location: index.php?page=pharmacy&tab=queue");
+            exit;
+        }
+
+        // Fetch prescription with encounter & patient
+        $rxStmt = $db->prepare("
+            SELECT p.*, e.id AS enc_id, e.encounter_number, e.encounter_type, e.patient_id,
+                   pt.first_name, pt.last_name, pt.mrn
+            FROM `prescriptions` p
+            JOIN `encounters` e ON p.encounter_id = e.id
+            JOIN `patients` pt ON e.patient_id = pt.id
+            WHERE p.id = ?
+        ");
+        $rxStmt->execute([$rxId]);
+        $rx = $rxStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$rx) {
+            set_flash('danger', 'Prescription record not found.');
+            header("Location: index.php?page=pharmacy&tab=queue");
+            exit;
+        }
+
+        if ($rx['status'] === 'Dispensed') {
+            set_flash('warning', 'Prescription #' . $rx['prescription_number'] . ' has already been dispensed.');
+            header("Location: index.php?page=pharmacy&tab=queue&print_receipt=" . $rxId);
+            exit;
+        }
+
+        // Fetch prescription items
+        $itemsStmt = $db->prepare("
+            SELECT pi.*, di.id AS drug_id, di.brand_name, di.generic_name, di.dosage_form
+            FROM `prescription_items` pi
+            JOIN `drug_items` di ON pi.drug_item_id = di.id
+            WHERE pi.prescription_id = ?
+        ");
+        $itemsStmt->execute([$rxId]);
+        $rxItems = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (empty($rxItems)) {
+            set_flash('danger', 'No items found in this prescription.');
+            header("Location: index.php?page=pharmacy&tab=queue");
+            exit;
+        }
+
+        try {
+            $db->beginTransaction();
+
+            $totalSaleAmount = 0.00;
+            $dispensedBatchAllocations = [];
+
+            // 1. Process each medication item via FEFO
+            foreach ($rxItems as $item) {
+                $qtyNeeded = (int)($item['quantity_prescribed'] ?? 1);
+                $qtyFulfilled = 0;
+
+                // Find active batches sorted by FEFO (expiry_date ASC, id ASC)
+                $batchStmt = $db->prepare("
+                    SELECT * FROM `drug_batches`
+                    WHERE `drug_item_id` = ? AND `current_quantity` > 0 AND `status` = 'Active'
+                    ORDER BY `expiry_date` ASC, `id` ASC
+                ");
+                $batchStmt->execute([$item['drug_id']]);
+                $batches = $batchStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($batches as $batch) {
+                    if ($qtyFulfilled >= $qtyNeeded) {
+                        break;
+                    }
+
+                    $availableInBatch = (int)$batch['current_quantity'];
+                    $takeQty = min($availableInBatch, ($qtyNeeded - $qtyFulfilled));
+                    $unitPrice = (float)$batch['unit_sale_price'];
+                    $lineTotal = $takeQty * $unitPrice;
+
+                    // Deduct from batch
+                    $newBatchQty = $availableInBatch - $takeQty;
+                    $newStatus = ($newBatchQty <= 0) ? 'Depleted' : 'Active';
+                    $updBatch = $db->prepare("UPDATE `drug_batches` SET `current_quantity` = ?, `status` = ? WHERE `id` = ?");
+                    $updBatch->execute([$newBatchQty, $newStatus, $batch['id']]);
+
+                    // Sync central inventory_items if matching item exists
+                    if (!empty($item['brand_name']) || !empty($item['generic_name'])) {
+                        $updInv = $db->prepare("
+                            UPDATE `inventory_items` 
+                            SET `current_stock` = GREATEST(0, current_stock - ?)
+                            WHERE `item_name` LIKE ? OR `generic_name` LIKE ?
+                            LIMIT 1
+                        ");
+                        $updInv->execute([$takeQty, '%' . $item['brand_name'] . '%', '%' . $item['generic_name'] . '%']);
+                    }
+
+                    $dispensedBatchAllocations[] = [
+                        'drug_item_id' => $item['drug_id'],
+                        'brand_name' => $item['brand_name'],
+                        'dosage' => $item['dosage'],
+                        'batch_id' => $batch['id'],
+                        'batch_number' => $batch['batch_number'],
+                        'expiry_date' => $batch['expiry_date'],
+                        'quantity' => $takeQty,
+                        'unit_price' => $unitPrice,
+                        'total_price' => $lineTotal
+                    ];
+
+                    $qtyFulfilled += $takeQty;
+                    $totalSaleAmount += $lineTotal;
+                }
+
+                // If no batch had stock, fallback to default price for billing
+                if ($qtyFulfilled == 0) {
+                    $fallbackPrice = 50.00;
+                    $lineTotal = $qtyNeeded * $fallbackPrice;
+                    $dispensedBatchAllocations[] = [
+                        'drug_item_id' => $item['drug_id'],
+                        'brand_name' => $item['brand_name'],
+                        'dosage' => $item['dosage'],
+                        'batch_id' => null,
+                        'batch_number' => 'STANDARD',
+                        'expiry_date' => null,
+                        'quantity' => $qtyNeeded,
+                        'unit_price' => $fallbackPrice,
+                        'total_price' => $lineTotal
+                    ];
+                    $qtyFulfilled = $qtyNeeded;
+                    $totalSaleAmount += $lineTotal;
+                }
+
+                // Update quantity_dispensed on prescription_items
+                $updItem = $db->prepare("UPDATE `prescription_items` SET `quantity_dispensed` = ? WHERE `id` = ?");
+                $updItem->execute([$qtyFulfilled, $item['id']]);
+            }
+
+            // 2. Generate Pharmacy Sale Record
+            $saleCount = (int)$db->query("SELECT COALESCE(MAX(id), 0) FROM `pharmacy_sales`")->fetchColumn();
+            $saleInvoiceNum = 'PH-INV-' . date('Ymd') . '-' . str_pad((string)($saleCount + 1), 4, '0', STR_PAD_LEFT);
+
+            $saleStmt = $db->prepare("
+                INSERT INTO `pharmacy_sales` 
+                (`sale_invoice_number`, `prescription_id`, `encounter_id`, `patient_id`, `customer_name`, `subtotal`, `discount_amount`, `tax_amount`, `net_total`, `payment_method`, `dispensed_by`, `created_at`)
+                VALUES (?, ?, ?, ?, ?, ?, 0.00, 0.00, ?, 'Bill_to_Encounter', ?, NOW())
+            ");
+            $custName = $rx['first_name'] . ' ' . $rx['last_name'];
+            $saleStmt->execute([$saleInvoiceNum, $rxId, $rx['enc_id'], $rx['patient_id'], $custName, $totalSaleAmount, $totalSaleAmount, Auth::id()]);
+            $saleId = (int)$db->lastInsertId();
+
+            // Insert pharmacy_sale_items
+            $psiStmt = $db->prepare("
+                INSERT INTO `pharmacy_sale_items` (`pharmacy_sale_id`, `drug_batch_id`, `quantity`, `unit_price`, `total_price`)
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            foreach ($dispensedBatchAllocations as $alloc) {
+                if ($alloc['batch_id']) {
+                    $psiStmt->execute([$saleId, $alloc['batch_id'], $alloc['quantity'], $alloc['unit_price'], $alloc['total_price']]);
+                }
+            }
+
+            // 3. Automatic Invoicing Synchronization
+            // Check if active bill exists for this encounter
+            $chkBillStmt = $db->prepare("
+                SELECT id, bill_number, gross_amount, net_amount, paid_amount, balance_amount 
+                FROM `bills` 
+                WHERE `encounter_id` = ? AND `payment_status` != 'Refunded' 
+                ORDER BY `id` DESC LIMIT 1
+            ");
+            $chkBillStmt->execute([$rx['enc_id']]);
+            $existingBill = $chkBillStmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($existingBill) {
+                $billId = (int)$existingBill['id'];
+                $billNumber = $existingBill['bill_number'];
+
+                $newGross = (float)$existingBill['gross_amount'] + $totalSaleAmount;
+                $newNet = (float)$existingBill['net_amount'] + $totalSaleAmount;
+                $paid = (float)$existingBill['paid_amount'];
+                $newBal = $newNet - $paid;
+                $newPayStatus = ($paid <= 0) ? 'Unpaid' : (($paid < $newNet) ? 'Partially-Paid' : 'Fully-Paid');
+
+                $updBillStmt = $db->prepare("
+                    UPDATE `bills` 
+                    SET `gross_amount` = ?, `net_amount` = ?, `balance_amount` = ?, `payment_status` = ?
+                    WHERE `id` = ?
+                ");
+                $updBillStmt->execute([$newGross, $newNet, $newBal, $newPayStatus, $billId]);
+            } else {
+                $billCount = (int)$db->query("SELECT COALESCE(MAX(id), 0) FROM `bills`")->fetchColumn();
+                $billNumber = 'INV-' . date('Y') . '-' . str_pad((string)($billCount + 1), 4, '0', STR_PAD_LEFT);
+                $bType = in_array($rx['encounter_type'], ['OPD', 'IPD', 'Emergency']) ? $rx['encounter_type'] : 'OPD';
+
+                $insBillStmt = $db->prepare("
+                    INSERT INTO `bills` 
+                    (`bill_number`, `encounter_id`, `patient_id`, `bill_type`, `bill_date`, `gross_amount`, `discount_amount`, `tax_amount`, `net_amount`, `paid_amount`, `balance_amount`, `payment_status`, `created_by`, `created_at`)
+                    VALUES (?, ?, ?, ?, NOW(), ?, 0.00, 0.00, ?, 0.00, ?, 'Unpaid', ?, NOW())
+                ");
+                $insBillStmt->execute([$billNumber, $rx['enc_id'], $rx['patient_id'], $bType, $totalSaleAmount, $totalSaleAmount, $totalSaleAmount, Auth::id()]);
+                $billId = (int)$db->lastInsertId();
+            }
+
+            // Insert medication line items into bill_items
+            $billItemStmt = $db->prepare("
+                INSERT INTO `bill_items` 
+                (`bill_id`, `item_type`, `reference_id`, `description`, `quantity`, `unit_price`, `subtotal`, `discount`, `net_price`, `created_at`)
+                VALUES (?, 'Medication', ?, ?, ?, ?, ?, 0.00, ?, NOW())
+            ");
+
+            foreach ($dispensedBatchAllocations as $alloc) {
+                $itemDesc = "Pharmacy: " . $alloc['brand_name'] . " (" . $alloc['dosage'] . ") [Batch: " . $alloc['batch_number'] . ($alloc['expiry_date'] ? ", Exp: " . date('m/y', strtotime($alloc['expiry_date'])) : "") . "]";
+                $billItemStmt->execute([
+                    $billId,
+                    $saleId,
+                    $itemDesc,
+                    $alloc['quantity'],
+                    $alloc['unit_price'],
+                    $alloc['total_price'],
+                    $alloc['total_price']
+                ]);
+            }
+
+            // 4. Mark Prescription as Dispensed
+            $db->prepare("UPDATE `prescriptions` SET `status` = 'Dispensed' WHERE `id` = ?")->execute([$rxId]);
+
+            // 5. Audit Logger
+            AuditLogger::log('DISPENSE', 'prescriptions', $rxId, null, [
+                'sale_invoice' => $saleInvoiceNum,
+                'bill_number' => $billNumber,
+                'total_amount' => $totalSaleAmount
+            ]);
+
+            $db->commit();
+
+            set_flash('success', "Prescription {$rx['prescription_number']} dispensed! Stock deducted via FEFO, Pharmacy Sale $saleInvoiceNum recorded, and Invoice $billNumber synchronized.");
+            header("Location: index.php?page=pharmacy&tab=queue&print_receipt=" . $rxId);
+            exit;
+
+        } catch (Exception $e) {
+            $db->rollBack();
+            set_flash('danger', "Pharmacy dispensing failed: " . $e->getMessage());
+            header("Location: index.php?page=pharmacy&tab=queue");
+            exit;
+        }
+    }
+
     // Default fallback if action unknown
     header("Location: index.php?page=dashboard");
     exit;
@@ -1770,6 +2044,13 @@ if ($page === 'login') {
         exit;
     }
     require_once __DIR__ . '/views/auth/login.php';
+    exit;
+}
+
+if ($page === 'print_credentials') {
+    Auth::requireLogin();
+    Auth::requireRole(['super_admin', 'hospital_admin']);
+    require_once __DIR__ . '/views/admin/print_credentials.php';
     exit;
 }
 

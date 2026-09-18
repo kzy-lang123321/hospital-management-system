@@ -27,10 +27,20 @@ $departments = $db->query("SELECT * FROM `departments` ORDER BY department_name 
             <h2 class="text-xl font-bold text-slate-800 tracking-tight">Hospital Staff & System Accounts</h2>
             <p class="text-xs text-slate-500">Role-Based Access Control (RBAC) credentials and departmental assignments</p>
         </div>
-        <button onclick="document.getElementById('userModal').classList.remove('hidden')" class="px-4 py-2 bg-medical-600 hover:bg-medical-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors flex items-center gap-2 self-start sm:self-auto">
-            <i class="fa-solid fa-user-plus"></i>
-            <span>Add New Staff Account</span>
-        </button>
+        <div class="flex items-center gap-2 flex-wrap">
+            <a href="index.php?page=print_credentials" target="_blank" class="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-lg border border-slate-200 shadow-xs transition-colors flex items-center gap-2">
+                <i class="fa-solid fa-print text-slate-500"></i>
+                <span>Print Credentials Sheet</span>
+            </a>
+            <a href="index.php?action=download_credentials_pdf" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold text-xs rounded-lg shadow-xs transition-colors flex items-center gap-2">
+                <i class="fa-solid fa-file-pdf text-rose-400"></i>
+                <span>Download Credentials PDF</span>
+            </a>
+            <button onclick="document.getElementById('userModal').classList.remove('hidden')" class="px-4 py-2 bg-medical-600 hover:bg-medical-700 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors flex items-center gap-2">
+                <i class="fa-solid fa-user-plus"></i>
+                <span>Add Staff Account</span>
+            </button>
+        </div>
     </div>
 
 <?php

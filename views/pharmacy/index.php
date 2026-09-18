@@ -62,14 +62,37 @@ if ($printReceiptRxId > 0) {
     }
 }
 
-// Fetch Drug Stock & Batches
-$batches = $db->query("
-    SELECT b.*, di.brand_name, di.generic_name, di.dosage_form, di.strength, di.unit_of_measure, c.category_name
+// Fetch Drug Stock & Batches with Narcotics & Expiry filter
+$stockFilter = clean_input($_GET['stock_filter'] ?? 'all');
+$stockSql = "
+    SELECT b.*, di.brand_name, di.generic_name, di.dosage_form, di.strength, di.unit_of_measure,
+           di.is_controlled_substance, di.narcotic_schedule, di.storage_condition,
+           c.category_name
     FROM `drug_batches` b
     JOIN `drug_items` di ON b.drug_item_id = di.id
     JOIN `drug_categories` c ON di.category_id = c.id
-    ORDER BY b.expiry_date ASC
-")->fetchAll();
+    WHERE 1=1
+";
+if ($stockFilter === 'narcotics') {
+    $stockSql .= " AND di.is_controlled_substance = 1";
+} elseif ($stockFilter === 'near_expiry') {
+    $stockSql .= " AND b.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 90 DAY)";
+} elseif ($stockFilter === 'expired') {
+    $stockSql .= " AND (b.expiry_date < CURDATE() OR b.status = 'Expired')";
+}
+$stockSql .= " ORDER BY b.expiry_date ASC";
+$batches = $db->query($stockSql)->fetchAll();
+
+// Counts for pills
+$batchCounts = $db->query("
+    SELECT 
+        COUNT(*) as total_batches,
+        COUNT(CASE WHEN di.is_controlled_substance = 1 THEN 1 END) as narcotics_batches,
+        COUNT(CASE WHEN b.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 90 DAY) THEN 1 END) as near_expiry_batches,
+        COUNT(CASE WHEN b.expiry_date < CURDATE() OR b.status = 'Expired' THEN 1 END) as expired_batches
+    FROM `drug_batches` b
+    JOIN `drug_items` di ON b.drug_item_id = di.id
+")->fetch(PDO::FETCH_ASSOC);
 ?>
 
 <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
@@ -200,9 +223,24 @@ $batches = $db->query("
     <!-- Tab 2: Drug Formulary & Batches -->
     <?php if ($activeTab === 'stock'): ?>
     <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-            <h3 class="font-bold text-slate-800 text-sm">Formulary Inventory Batches (FEFO Sort)</h3>
-            <span class="text-xs text-slate-500 font-mono"><?= count($batches) ?> Active Batches</span>
+        
+        <!-- Header & Filter Pills -->
+        <div class="p-4 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/60">
+            <div class="flex flex-wrap items-center gap-2">
+                <a href="index.php?page=pharmacy&tab=stock&stock_filter=all" class="px-2.5 py-1 rounded-lg text-xs font-bold transition-all <?= $stockFilter === 'all' ? 'bg-medical-700 text-white shadow-xs' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100' ?>">
+                    All Batches (<?= (int)($batchCounts['total_batches'] ?? 0) ?>)
+                </a>
+                <a href="index.php?page=pharmacy&tab=stock&stock_filter=narcotics" class="px-2.5 py-1 rounded-lg text-xs font-bold transition-all <?= $stockFilter === 'narcotics' ? 'bg-purple-700 text-white shadow-xs' : 'bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100' ?>">
+                    <i class="fa-solid fa-skull mr-1 text-purple-400"></i> Controlled / Narcotics (<?= (int)($batchCounts['narcotics_batches'] ?? 0) ?>)
+                </a>
+                <a href="index.php?page=pharmacy&tab=stock&stock_filter=near_expiry" class="px-2.5 py-1 rounded-lg text-xs font-bold transition-all <?= $stockFilter === 'near_expiry' ? 'bg-amber-500 text-white shadow-xs' : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100' ?>">
+                    <i class="fa-solid fa-clock-rotate-left mr-1 text-amber-500"></i> Near-Expiry &lt;90d (<?= (int)($batchCounts['near_expiry_batches'] ?? 0) ?>)
+                </a>
+                <a href="index.php?page=pharmacy&tab=stock&stock_filter=expired" class="px-2.5 py-1 rounded-lg text-xs font-bold transition-all <?= $stockFilter === 'expired' ? 'bg-rose-700 text-white shadow-xs' : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100' ?>">
+                    <i class="fa-solid fa-ban mr-1 text-rose-400"></i> Expired (<?= (int)($batchCounts['expired_batches'] ?? 0) ?>)
+                </a>
+            </div>
+            <span class="text-xs text-slate-500 font-mono"><?= count($batches) ?> Showing</span>
         </div>
 
         <div class="overflow-x-auto">
@@ -210,48 +248,78 @@ $batches = $db->query("
                 <thead class="bg-slate-50 text-slate-600 font-semibold uppercase tracking-wider text-[10px] border-b border-slate-200">
                     <tr>
                         <th class="px-6 py-3.5">Medicine Name</th>
-                        <th class="px-4 py-3.5">Category / Form</th>
+                        <th class="px-4 py-3.5">Category &amp; Storage</th>
                         <th class="px-4 py-3.5">Batch #</th>
-                        <th class="px-4 py-3.5">Expiry Date</th>
+                        <th class="px-4 py-3.5">Expiry Date (FEFO)</th>
                         <th class="px-4 py-3.5">Available Qty</th>
                         <th class="px-4 py-3.5">Unit Sale Price</th>
                         <th class="px-6 py-3.5">Status</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
+                    <?php if (empty($batches)): ?>
+                    <tr>
+                        <td colspan="7" class="px-6 py-8 text-center text-slate-400">
+                            No medication batches found matching the selected filter.
+                        </td>
+                    </tr>
+                    <?php else: ?>
                     <?php foreach ($batches as $b): 
-                        $daysToExpiry = (strtotime($b['expiry_date']) - time()) / 86400;
-                        $isExpiring = $daysToExpiry < 90;
+                        $daysToExpiry = round((strtotime($b['expiry_date']) - time()) / 86400);
+                        $isExpired = $daysToExpiry < 0;
+                        $isExpiring = $daysToExpiry >= 0 && $daysToExpiry <= 90;
                     ?>
-                    <tr class="hover:bg-slate-50/80 transition-colors">
+                    <tr class="hover:bg-slate-50/80 transition-colors <?= $isExpired ? 'bg-rose-50/40' : ($isExpiring ? 'bg-amber-50/30' : '') ?>">
                         <td class="px-6 py-3.5">
-                            <div class="font-bold text-slate-900"><?= htmlspecialchars($b['brand_name']) ?></div>
-                            <div class="text-[11px] text-slate-500"><?= htmlspecialchars($b['generic_name']) ?> (<?= htmlspecialchars($b['strength']) ?>)</div>
+                            <div class="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
+                                <span><?= htmlspecialchars($b['brand_name']) ?></span>
+                                <?php if (!empty($b['is_controlled_substance'])): ?>
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                        <i class="fa-solid fa-skull mr-1 text-purple-600"></i> <?= htmlspecialchars($b['narcotic_schedule'] ?? 'Controlled') ?>
+                                    </span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="text-[11px] text-slate-500 font-medium"><?= htmlspecialchars($b['generic_name']) ?> (<?= htmlspecialchars($b['strength']) ?>)</div>
                         </td>
                         <td class="px-4 py-3.5">
-                            <div class="text-slate-700"><?= htmlspecialchars($b['category_name']) ?></div>
+                            <div class="text-slate-700 font-semibold"><?= htmlspecialchars($b['category_name']) ?></div>
                             <div class="text-[10px] text-slate-400"><?= htmlspecialchars($b['dosage_form']) ?></div>
+                            <?php if (!empty($b['storage_condition'])): ?>
+                                <div class="text-[10px] text-sky-700 mt-0.5 flex items-center gap-1">
+                                    <i class="fa-solid fa-snowflake text-sky-400"></i>
+                                    <span><?= htmlspecialchars($b['storage_condition']) ?></span>
+                                </div>
+                            <?php endif; ?>
                         </td>
-                        <td class="px-4 py-3.5 font-mono text-slate-700"><?= htmlspecialchars($b['batch_number']) ?></td>
-                        <td class="px-4 py-3.5 font-mono <?= $isExpiring ? 'text-rose-600 font-bold' : 'text-slate-700' ?>">
+                        <td class="px-4 py-3.5 font-mono font-semibold text-slate-700"><?= htmlspecialchars($b['batch_number']) ?></td>
+                        <td class="px-4 py-3.5 font-mono <?= $isExpired ? 'text-rose-600 font-bold' : ($isExpiring ? 'text-amber-600 font-bold' : 'text-slate-700') ?>">
                             <?= format_date($b['expiry_date']) ?>
-                            <?php if ($isExpiring): ?>
-                                <span class="text-[10px] text-rose-500 block">Expiring soon</span>
+                            <?php if ($isExpired): ?>
+                                <span class="px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 text-[9px] font-extrabold uppercase block w-fit mt-0.5">EXPIRED</span>
+                            <?php elseif ($isExpiring): ?>
+                                <span class="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[9px] font-bold block w-fit mt-0.5"><?= $daysToExpiry ?> days left</span>
                             <?php endif; ?>
                         </td>
                         <td class="px-4 py-3.5 font-bold font-mono text-slate-900">
                             <?= number_format($b['current_quantity']) ?> <span class="text-[10px] font-normal text-slate-400">/ <?= $b['initial_quantity'] ?></span>
                         </td>
-                        <td class="px-4 py-3.5 font-semibold text-slate-800">
+                        <td class="px-4 py-3.5 font-semibold text-emerald-700 font-mono">
                             <?= format_currency($b['unit_sale_price']) ?>
                         </td>
                         <td class="px-6 py-3.5">
-                            <span class="px-2 py-0.5 rounded text-[10px] font-bold <?= $b['status'] === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700' ?>">
-                                <?= htmlspecialchars($b['status']) ?>
-                            </span>
+                            <?php if ($isExpired): ?>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                    <i class="fa-solid fa-ban mr-0.5"></i> Quarantined
+                                </span>
+                            <?php else: ?>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold <?= $b['status'] === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700' ?>">
+                                    <?= htmlspecialchars($b['status']) ?>
+                                </span>
+                            <?php endif; ?>
                         </td>
                     </tr>
                     <?php endforeach; ?>
+                    <?php endif; ?>
                 </tbody>
             </table>
         </div>
