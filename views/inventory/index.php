@@ -197,7 +197,8 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
             </div>
 
             <!-- Table -->
-            <div class="overflow-x-auto">
+            <!-- Table -->
+            <div class="overflow-x-auto custom-scrollbar">
                 <table class="w-full text-left text-xs border-collapse">
                     <thead class="bg-slate-50 border-b border-slate-200 text-slate-600 uppercase font-semibold text-[11px]">
                         <tr>
@@ -205,10 +206,8 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
                             <th class="py-3 px-4">Medicine / Consumable Name</th>
                             <th class="py-3 px-4">Category &amp; Storage</th>
                             <th class="py-3 px-4">Batch # &amp; Expiry</th>
-                            <th class="py-3 px-4">Current Stock</th>
-                            <th class="py-3 px-4">Reorder</th>
-                            <th class="py-3 px-4">Unit Cost</th>
-                            <th class="py-3 px-4">Sale MRP</th>
+                            <th class="py-3 px-4">Stock / Reorder</th>
+                            <th class="py-3 px-4">Cost &amp; MRP</th>
                             <th class="py-3 px-4">Valuation</th>
                             <th class="py-3 px-4">Status</th>
                         </tr>
@@ -216,7 +215,7 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
                     <tbody class="divide-y divide-slate-100 text-slate-700">
                         <?php if (empty($items)): ?>
                         <tr>
-                            <td colspan="10" class="text-center py-12 text-slate-400">
+                            <td colspan="8" class="text-center py-12 text-slate-400">
                                 <i class="fa-solid fa-box-open text-3xl mb-2 text-slate-300"></i>
                                 <p>No matching inventory items found for this filter criteria.</p>
                             </td>
@@ -229,7 +228,7 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
                             $isLow = $it['current_stock'] <= $it['reorder_level'];
                         ?>
                         <tr class="hover:bg-slate-50 transition-colors <?= $isExpired ? 'bg-rose-50/40' : ($isNearExpiry ? 'bg-amber-50/30' : ($isLow ? 'bg-red-50/20' : '')) ?>">
-                            <td class="py-3 px-4 font-mono font-bold text-slate-900"><?= htmlspecialchars($it['item_code']) ?></td>
+                            <td class="py-3 px-4 font-mono font-bold text-slate-900 whitespace-nowrap"><?= htmlspecialchars($it['item_code']) ?></td>
                             <td class="py-3 px-4">
                                 <div class="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
                                     <span><?= htmlspecialchars($it['item_name']) ?></span>
@@ -257,7 +256,7 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
                                     </div>
                                 <?php endif; ?>
                             </td>
-                            <td class="py-3 px-4 font-mono">
+                            <td class="py-3 px-4 font-mono whitespace-nowrap">
                                 <div class="text-slate-800 font-semibold"><?= htmlspecialchars($it['batch_number'] ?? 'N/A') ?></div>
                                 <?php if (!empty($it['expiry_date'])): ?>
                                     <div class="text-[11px] mt-0.5 <?= $isExpired ? 'text-rose-600 font-bold' : ($isNearExpiry ? 'text-amber-600 font-bold' : 'text-slate-500') ?>">
@@ -272,21 +271,19 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
                                     <div class="text-[10px] text-slate-400">Non-perishable</div>
                                 <?php endif; ?>
                             </td>
-                            <td class="py-3 px-4">
+                            <td class="py-3 px-4 whitespace-nowrap">
                                 <div class="font-bold font-mono <?= $isLow ? 'text-red-600' : 'text-slate-800' ?>">
                                     <?= (int)$it['current_stock'] ?> <span class="text-[10px] font-normal text-slate-400"><?= htmlspecialchars($it['unit_of_measure']) ?></span>
                                 </div>
+                                <div class="text-[10px] text-slate-400 font-mono">Reorder: <?= (int)$it['reorder_level'] ?></div>
                             </td>
-                            <td class="py-3 px-4 text-slate-500 font-mono"><?= (int)$it['reorder_level'] ?></td>
-                            <td class="py-3 px-4 text-slate-700"><?= format_currency($it['unit_cost_price']) ?></td>
-                            <td class="py-3 px-4">
+                            <td class="py-3 px-4 whitespace-nowrap">
+                                <div class="text-slate-700 font-semibold"><?= format_currency($it['unit_cost_price']) ?></div>
                                 <?php if (!empty($it['unit_sale_price']) && (float)$it['unit_sale_price'] > 0): ?>
-                                    <span class="font-semibold text-emerald-700 font-mono"><?= format_currency($it['unit_sale_price']) ?></span>
-                                <?php else: ?>
-                                    <span class="text-slate-400 text-[11px]">-</span>
+                                    <div class="text-[10px] text-emerald-600 font-bold font-mono">MRP: <?= format_currency($it['unit_sale_price']) ?></div>
                                 <?php endif; ?>
                             </td>
-                            <td class="py-3 px-4 font-semibold text-slate-900"><?= format_currency($it['current_stock'] * $it['unit_cost_price']) ?></td>
+                            <td class="py-3 px-4 font-semibold text-slate-900 whitespace-nowrap"><?= format_currency($it['current_stock'] * $it['unit_cost_price']) ?></td>
                             <td class="py-3 px-4 whitespace-nowrap">
                                 <?php if ($isExpired): ?>
                                     <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
@@ -424,8 +421,8 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
 </main>
 
 <!-- MODAL: ADD INVENTORY / PHARMACEUTICAL ITEM -->
-<div id="modal-add-item" class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center hidden p-4">
-    <div class="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden max-h-[92vh] flex flex-col">
+<div id="modal-add-item" class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center hidden p-4 overflow-x-hidden">
+    <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
         <div class="px-6 py-4 bg-amber-600 text-white flex items-center justify-between flex-shrink-0">
             <div>
                 <h3 class="font-bold text-base">Register Medicine / Stock Consumable</h3>
@@ -436,37 +433,37 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
             </button>
         </div>
 
-        <form method="POST" action="index.php?action=inventory_item_store" class="p-6 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+        <form method="POST" action="index.php?action=inventory_item_store" class="p-6 space-y-4 overflow-y-auto overflow-x-hidden custom-scrollbar flex-1">
             <?= csrf_field() ?>
 
-            <div class="grid grid-cols-2 gap-3">
-                <div class="col-span-2 sm:col-span-1">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="min-w-0">
                     <label class="form-label text-xs">Item / Brand Name <span class="text-red-500">*</span></label>
                     <input type="text" name="item_name" required placeholder="e.g. Morphine Sulfate 10mg / Augmentin 625mg" class="form-input text-xs font-semibold">
                 </div>
-                <div class="col-span-2 sm:col-span-1">
+                <div class="min-w-0">
                     <label class="form-label text-xs">Generic Formula</label>
                     <input type="text" name="generic_name" placeholder="e.g. Morphine Sulfate / Amoxicillin + Clav" class="form-input text-xs">
                 </div>
             </div>
 
-            <div class="grid grid-cols-3 gap-3">
-                <div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="min-w-0">
                     <label class="form-label text-xs">Item Code <span class="text-red-500">*</span></label>
                     <input type="text" name="item_code" required placeholder="e.g. MED-MOR-10" class="form-input text-xs font-mono">
                 </div>
-                <div>
+                <div class="min-w-0">
                     <label class="form-label text-xs">Category <span class="text-red-500">*</span></label>
                     <select name="category_id" required class="form-input text-xs">
-                        <option value="">-- Category --</option>
+                        <option value="">-- Select Category --</option>
                         <?php foreach ($categories as $cat): ?>
                         <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['category_name']) ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div>
-                    <label class="form-label text-xs">Dosage Form</label>
-                    <select name="dosage_form" class="form-input text-xs">
+                <div class="min-w-0">
+                    <label class="form-label text-xs">Dosage Form <span class="text-red-500">*</span></label>
+                    <select name="dosage_form" required class="form-input text-xs">
                         <option value="Tablets">Tablets</option>
                         <option value="Capsules">Capsules</option>
                         <option value="Injection">Injection (Ampoule/Vial)</option>
@@ -482,7 +479,7 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
             </div>
 
             <!-- Controlled Substance / Narcotics Section -->
-            <div class="p-3.5 bg-purple-50/70 border border-purple-200 rounded-xl space-y-3">
+            <div class="p-4 bg-purple-50/70 border border-purple-200 rounded-xl space-y-3">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">
                         <input type="checkbox" name="is_narcotic" value="1" id="is_narcotic_check" class="rounded text-purple-600 focus:ring-purple-500 h-4 w-4">
@@ -493,22 +490,22 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
                     <span class="text-[10px] text-purple-700 font-semibold bg-purple-100 px-2 py-0.5 rounded">High Security Storage</span>
                 </div>
 
-                <div class="grid grid-cols-2 gap-3 pt-1">
-                    <div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                    <div class="min-w-0">
                         <label class="form-label text-xs text-purple-900">Narcotic Schedule</label>
                         <select name="narcotic_schedule" class="form-input text-xs bg-white">
-                            <option value="">-- Select Schedule --</option>
-                            <option value="Schedule II">Schedule II (High Abuse Potential, e.g. Morphine/Fentanyl)</option>
-                            <option value="Schedule IV">Schedule IV (Low/Moderate Potential, e.g. Diazepam/Tramadol)</option>
+                            <option value="">-- Non-Controlled / Regular --</option>
+                            <option value="Schedule II">Schedule II (Opioids: Morphine, Fentanyl)</option>
+                            <option value="Schedule IV">Schedule IV (Sedatives: Diazepam, Tramadol)</option>
                             <option value="Controlled Drug">Controlled Hospital Formulary</option>
                         </select>
                     </div>
-                    <div>
+                    <div class="min-w-0">
                         <label class="form-label text-xs text-purple-900">Storage Condition</label>
                         <select name="storage_condition" class="form-input text-xs bg-white">
                             <option value="Room Temperature (15-25°C)">Room Temperature (15-25°C)</option>
-                            <option value="Cold Chain (2-8°C)">Cold Chain (2-8°C Refrigerator)</option>
-                            <option value="Controlled Vault / Double-Lock Safe">Controlled Double-Lock Safe</option>
+                            <option value="Cold Chain (2-8°C)">Cold Chain Refrigerator (2-8°C)</option>
+                            <option value="Controlled Vault / Double-Lock Safe">Controlled Vault / Double-Lock Safe</option>
                             <option value="Deep Freeze (-20°C)">Deep Freeze (-20°C)</option>
                             <option value="Protect from Light">Protect from Light</option>
                         </select>
@@ -517,40 +514,41 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
             </div>
 
             <!-- Batch & Expiry Tracking -->
-            <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+            <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
                 <div class="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Batch Identification &amp; Shelf Life</div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="min-w-0">
                         <label class="form-label text-xs">Initial Batch Number</label>
                         <input type="text" name="batch_number" placeholder="e.g. BT-2026-901" class="form-input text-xs font-mono font-bold">
                     </div>
-                    <div>
+                    <div class="min-w-0">
                         <label class="form-label text-xs">Batch Expiry Date</label>
                         <input type="date" name="expiry_date" value="<?= date('Y-m-d', strtotime('+18 months')) ?>" class="form-input text-xs font-mono">
                     </div>
                 </div>
             </div>
 
-            <div class="grid grid-cols-4 gap-3">
-                <div>
+            <!-- Stock & Cost Grid -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div class="min-w-0">
                     <label class="form-label text-xs">Unit UOM</label>
                     <input type="text" name="unit_of_measure" value="Box / Pack" class="form-input text-xs">
                 </div>
-                <div>
+                <div class="min-w-0">
                     <label class="form-label text-xs">Opening Stock</label>
                     <input type="number" name="current_stock" value="50" class="form-input text-xs font-bold">
                 </div>
-                <div>
+                <div class="min-w-0">
                     <label class="form-label text-xs">Reorder Level</label>
                     <input type="number" name="reorder_level" value="20" class="form-input text-xs">
                 </div>
-                <div>
+                <div class="min-w-0">
                     <label class="form-label text-xs">Cost Price (Rs.) <span class="text-red-500">*</span></label>
                     <input type="number" step="0.01" name="unit_cost_price" required placeholder="850.00" class="form-input text-xs font-semibold">
                 </div>
             </div>
 
-            <div>
+            <div class="min-w-0">
                 <label class="form-label text-xs">Unit Sale MRP (Rs.)</label>
                 <input type="number" step="0.01" name="unit_sale_price" placeholder="1050.00" class="form-input text-xs font-semibold text-emerald-700">
                 <p class="text-[10px] text-slate-400 mt-1">Dispensing counter retail price per unit billed to patients.</p>
@@ -567,51 +565,51 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
 </div>
 
 <!-- MODAL: ADD SUPPLIER -->
-<div id="modal-add-supplier" class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center hidden p-4">
-    <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden">
-        <div class="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+<div id="modal-add-supplier" class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center hidden p-4 overflow-x-hidden">
+    <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
+        <div class="px-6 py-4 bg-slate-900 text-white flex items-center justify-between flex-shrink-0">
             <h3 class="font-bold text-base">Register Vendor / Supplier</h3>
             <button type="button" onclick="document.getElementById('modal-add-supplier').classList.add('hidden')" class="text-white/80 hover:text-white text-lg">
                 <i class="fa-solid fa-xmark"></i>
             </button>
         </div>
 
-        <form method="POST" action="index.php?action=supplier_store" class="p-6 space-y-4">
+        <form method="POST" action="index.php?action=supplier_store" class="p-6 space-y-4 overflow-y-auto overflow-x-hidden custom-scrollbar flex-1">
             <?= csrf_field() ?>
 
-            <div>
+            <div class="min-w-0">
                 <label class="form-label text-xs">Supplier Name <span class="text-red-500">*</span></label>
                 <input type="text" name="supplier_name" required placeholder="e.g. Khyber Surgical Supplies Ltd." class="form-input text-xs">
             </div>
 
-            <div class="grid grid-cols-2 gap-3">
-                <div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="min-w-0">
                     <label class="form-label text-xs">Supplier Code <span class="text-red-500">*</span></label>
                     <input type="text" name="code" required placeholder="e.g. SUP-KHYBER" class="form-input text-xs font-mono">
                 </div>
-                <div>
+                <div class="min-w-0">
                     <label class="form-label text-xs">Phone <span class="text-red-500">*</span></label>
                     <input type="text" name="phone" required placeholder="+92 91 ..." class="form-input text-xs">
                 </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-3">
-                <div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="min-w-0">
                     <label class="form-label text-xs">Contact Person</label>
                     <input type="text" name="contact_person" placeholder="Manager" class="form-input text-xs">
                 </div>
-                <div>
+                <div class="min-w-0">
                     <label class="form-label text-xs">Email</label>
                     <input type="email" name="email" placeholder="sales@vendor.com" class="form-input text-xs">
                 </div>
             </div>
 
-            <div>
+            <div class="min-w-0">
                 <label class="form-label text-xs">Office Address</label>
                 <input type="text" name="address" placeholder="Peshawar Industrial Estate..." class="form-input text-xs">
             </div>
 
-            <div class="pt-3 border-t border-slate-200 flex justify-end gap-3">
+            <div class="pt-3 border-t border-slate-200 flex justify-end gap-3 flex-shrink-0">
                 <button type="button" onclick="document.getElementById('modal-add-supplier').classList.add('hidden')" class="btn-secondary text-xs">Cancel</button>
                 <button type="submit" class="btn-primary text-xs font-bold">
                     <i class="fa-solid fa-check mr-1"></i> Save Supplier
@@ -622,20 +620,20 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
 </div>
 
 <!-- MODAL: GENERATE PURCHASE ORDER -->
-<div id="modal-create-po" class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center hidden p-4">
-    <div class="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden">
-        <div class="px-6 py-4 bg-medical-700 text-white flex items-center justify-between">
+<div id="modal-create-po" class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center hidden p-4 overflow-x-hidden">
+    <div class="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
+        <div class="px-6 py-4 bg-medical-700 text-white flex items-center justify-between flex-shrink-0">
             <h3 class="font-bold text-base">Generate Vendor Purchase Order (PO)</h3>
             <button type="button" onclick="document.getElementById('modal-create-po').classList.add('hidden')" class="text-white/80 hover:text-white text-lg">
                 <i class="fa-solid fa-xmark"></i>
             </button>
         </div>
 
-        <form method="POST" action="index.php?action=po_store" class="p-6 space-y-4">
+        <form method="POST" action="index.php?action=po_store" class="p-6 space-y-4 overflow-y-auto overflow-x-hidden custom-scrollbar flex-1">
             <?= csrf_field() ?>
 
-            <div class="grid grid-cols-2 gap-4">
-                <div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="min-w-0">
                     <label class="form-label text-xs">Select Supplier <span class="text-red-500">*</span></label>
                     <select name="supplier_id" required class="form-input text-xs font-semibold">
                         <option value="">-- Choose Vendor --</option>
@@ -644,39 +642,39 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div>
+                <div class="min-w-0">
                     <label class="form-label text-xs">Expected Delivery Date</label>
                     <input type="date" name="expected_delivery_date" value="<?= date('Y-m-d', strtotime('+7 days')) ?>" class="form-input text-xs">
                 </div>
             </div>
 
             <!-- Primary Line Item -->
-            <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
+            <div class="p-3.5 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
                 <div class="text-[11px] font-bold text-slate-500 uppercase">Purchase Item Details</div>
-                <div>
+                <div class="min-w-0">
                     <label class="form-label text-xs">Select Stock Consumable Item <span class="text-red-500">*</span></label>
                     <select name="item_name" required class="form-input text-xs font-semibold">
                         <option value="">-- Choose Consumable --</option>
                         <?php foreach ($items as $it): ?>
                         <option value="<?= htmlspecialchars($it['item_name']) ?>">
-                            <?= htmlspecialchars($it['item_name']) ?> (Current Stock: <?= (int)$it['current_stock'] ?>)
+                            <?= htmlspecialchars($it['item_name']) ?> (Stock: <?= (int)$it['current_stock'] ?>)
                         </option>
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div class="min-w-0">
                         <label class="form-label text-xs">Order Quantity <span class="text-red-500">*</span></label>
                         <input type="number" name="quantity" value="50" min="1" required class="form-input text-xs font-bold">
                     </div>
-                    <div>
+                    <div class="min-w-0">
                         <label class="form-label text-xs">Agreed Unit Price (Rs.) <span class="text-red-500">*</span></label>
                         <input type="number" step="0.01" name="unit_price" value="850.00" required class="form-input text-xs font-bold">
                     </div>
                 </div>
             </div>
 
-            <div class="pt-3 border-t border-slate-200 flex justify-end gap-3">
+            <div class="pt-3 border-t border-slate-200 flex justify-end gap-3 flex-shrink-0">
                 <button type="button" onclick="document.getElementById('modal-create-po').classList.add('hidden')" class="btn-secondary text-xs">Cancel</button>
                 <button type="submit" class="btn-primary text-xs font-bold">
                     <i class="fa-solid fa-file-invoice mr-1"></i> Issue Purchase Order
