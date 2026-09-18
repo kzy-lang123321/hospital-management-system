@@ -33,11 +33,46 @@ $departments = $db->query("SELECT * FROM `departments` ORDER BY department_name 
         </button>
     </div>
 
+<?php
+$roleBadges = [
+    'super_admin' => 'bg-rose-50 text-rose-700 border-rose-200',
+    'hospital_admin' => 'bg-purple-50 text-purple-700 border-purple-200',
+    'doctor' => 'bg-blue-50 text-blue-700 border-blue-200',
+    'nurse' => 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    'pharmacist' => 'bg-amber-50 text-amber-700 border-amber-200',
+    'lab_technician' => 'bg-cyan-50 text-cyan-700 border-cyan-200',
+    'radiologist' => 'bg-indigo-50 text-indigo-700 border-indigo-200',
+    'cashier' => 'bg-teal-50 text-teal-700 border-teal-200',
+    'receptionist' => 'bg-pink-50 text-pink-700 border-pink-200',
+];
+?>
+
+    <!-- Quick Credentials & Role Reference Callout -->
+    <div class="bg-gradient-to-r from-medical-900 to-slate-900 text-white rounded-2xl p-4 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div class="space-y-1">
+            <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-medical-500/30 text-medical-200 border border-medical-400/30 font-mono">RBAC SECURITY MATRIX</span>
+                <span class="text-xs text-slate-300">Multi-User Account Governance Active</span>
+            </div>
+            <p class="text-xs text-slate-300">
+                Admins can create accounts for any department. Default password for all seed accounts is <code class="px-1.5 py-0.5 bg-white/10 rounded font-mono text-medical-300 font-bold">Admin@123</code>.
+            </p>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap text-[11px]">
+            <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">🧪 Lab: @lab.usman</span>
+            <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">💊 Pharm: @pharm.kamran</span>
+            <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">🩻 Radio: @radio.farooq</span>
+            <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">🩺 OPD: @dr.tariq</span>
+            <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">🏥 Ward: @nurse.fatima</span>
+            <span class="px-2 py-1 bg-white/10 rounded-lg text-slate-200 font-mono">💵 Cashier: @cashier.hassan</span>
+        </div>
+    </div>
+
     <!-- Staff Directory Table -->
     <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
             <h3 class="font-bold text-slate-800 text-sm">Active Staff Directory</h3>
-            <span class="text-xs text-slate-500 font-mono"><?= count($users) ?> Users</span>
+            <span class="text-xs text-slate-500 font-mono"><?= count($users) ?> Accounts</span>
         </div>
 
         <div class="overflow-x-auto">
@@ -51,22 +86,26 @@ $departments = $db->query("SELECT * FROM `departments` ORDER BY department_name 
                         <th class="px-4 py-3.5">Consultation Fee</th>
                         <th class="px-4 py-3.5">Contact</th>
                         <th class="px-4 py-3.5">Status</th>
-                        <th class="px-6 py-3.5 text-right">Last Login</th>
+                        <th class="px-4 py-3.5 text-right">Last Login</th>
+                        <th class="px-6 py-3.5 text-center">Actions</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
-                    <?php foreach ($users as $u): ?>
-                    <tr class="hover:bg-slate-50">
+                    <?php foreach ($users as $u): 
+                        $badgeClass = $roleBadges[$u['slug'] ?? ''] ?? 'bg-slate-50 text-slate-700 border-slate-200';
+                        $isActive = ($u['status'] === 'Active');
+                    ?>
+                    <tr class="hover:bg-slate-50 transition-colors">
                         <td class="px-6 py-3.5">
                             <div class="font-bold text-slate-900"><?= htmlspecialchars($u['full_name']) ?></div>
                             <div class="text-[11px] font-mono text-slate-400">@<?= htmlspecialchars($u['username']) ?></div>
                         </td>
                         <td class="px-4 py-3.5">
-                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-medical-50 text-medical-800 border border-medical-200">
+                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold border <?= $badgeClass ?>">
                                 <?= htmlspecialchars($u['role_name']) ?>
                             </span>
                         </td>
-                        <td class="px-4 py-3.5 text-slate-700"><?= htmlspecialchars($u['department_name'] ?? 'General') ?></td>
+                        <td class="px-4 py-3.5 text-slate-700 font-medium"><?= htmlspecialchars($u['department_name'] ?? 'General') ?></td>
                         <td class="px-4 py-3.5">
                             <div class="text-slate-800 font-medium"><?= htmlspecialchars($u['designation'] ?? '—') ?></div>
                             <div class="text-[10px] text-slate-400"><?= htmlspecialchars($u['qualification'] ?? '') ?></div>
@@ -79,12 +118,29 @@ $departments = $db->query("SELECT * FROM `departments` ORDER BY department_name 
                             <div class="text-[10px] font-mono text-slate-400"><?= htmlspecialchars($u['phone'] ?? '') ?></div>
                         </td>
                         <td class="px-4 py-3.5">
-                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold <?= $isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700' ?>">
                                 <?= htmlspecialchars($u['status']) ?>
                             </span>
                         </td>
-                        <td class="px-6 py-3.5 text-right text-slate-400 font-mono text-[11px]">
-                            <?= format_datetime($u['last_login_at']) ?>
+                        <td class="px-4 py-3.5 text-right text-slate-400 font-mono text-[11px]">
+                            <?= !empty($u['last_login_at']) ? format_datetime($u['last_login_at']) : 'Never' ?>
+                        </td>
+                        <td class="px-6 py-3.5 text-center whitespace-nowrap">
+                            <div class="flex items-center justify-center gap-1.5">
+                                <?php if ((int)$u['id'] !== (int)Auth::id()): ?>
+                                <form action="index.php?action=user_status_toggle" method="POST" class="inline" onsubmit="return confirm('Change status for account @<?= htmlspecialchars(addslashes($u['username'])) ?>?');">
+                                    <?= csrf_field() ?>
+                                    <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
+                                    <button type="submit" class="px-2 py-1 rounded text-[10px] font-bold border transition-colors <?= $isActive ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' ?>" title="Toggle Active / Inactive">
+                                        <?= $isActive ? '<i class="fa-solid fa-user-slash"></i> Deactivate' : '<i class="fa-solid fa-user-check"></i> Activate' ?>
+                                    </button>
+                                </form>
+                                <?php endif; ?>
+
+                                <button type="button" onclick="openResetModal(<?= $u['id'] ?>, '<?= htmlspecialchars(addslashes($u['username'])) ?>', '<?= htmlspecialchars(addslashes($u['full_name'])) ?>')" class="px-2 py-1 rounded text-[10px] font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 transition-colors" title="Reset Password">
+                                    <i class="fa-solid fa-key"></i> Reset Key
+                                </button>
+                            </div>
                         </td>
                     </tr>
                     <?php endforeach; ?>
@@ -177,3 +233,54 @@ $departments = $db->query("SELECT * FROM `departments` ORDER BY department_name 
         </form>
     </div>
 </div>
+
+<!-- Reset Password Modal -->
+<div id="resetPasswordModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 hidden">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-200">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <i class="fa-solid fa-key text-medical-600"></i> Reset Staff Password
+            </h3>
+            <button type="button" onclick="document.getElementById('resetPasswordModal').classList.add('hidden')" class="text-slate-400 hover:text-slate-600">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+        </div>
+
+        <form action="index.php?action=user_reset_password" method="POST" class="space-y-4">
+            <?= csrf_field() ?>
+            <input type="hidden" name="user_id" id="reset_user_id" value="">
+
+            <div class="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <p class="text-[11px] text-slate-500 uppercase tracking-wider font-bold">Target Account</p>
+                <p class="text-sm font-bold text-slate-800" id="reset_fullname_badge">-</p>
+                <p class="text-xs text-medical-600 font-mono font-semibold" id="reset_username_badge">-</p>
+            </div>
+
+            <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">New Password <span class="text-rose-500">*</span></label>
+                <input type="password" name="new_password" id="reset_new_password" required minlength="6" placeholder="Enter new password (min 6 chars)" class="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg outline-none focus:border-medical-500 font-mono">
+                <p class="text-[10px] text-slate-400 mt-1">Minimum 6 characters. Recommended: strong letters + numbers.</p>
+            </div>
+
+            <div class="pt-2 flex items-center justify-end gap-2">
+                <button type="button" onclick="document.getElementById('resetPasswordModal').classList.add('hidden')" class="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold">
+                    Cancel
+                </button>
+                <button type="submit" class="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold shadow-sm">
+                    Update Password
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openResetModal(userId, username, fullName) {
+    document.getElementById('reset_user_id').value = userId;
+    document.getElementById('reset_username_badge').textContent = '@' + username;
+    document.getElementById('reset_fullname_badge').textContent = fullName;
+    document.getElementById('reset_new_password').value = '';
+    document.getElementById('resetPasswordModal').classList.remove('hidden');
+}
+</script>
+

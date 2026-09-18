@@ -1035,17 +1035,94 @@ if ($action !== null) {
         $email = clean_input($_POST['email'] ?? '');
         $phone = clean_input($_POST['phone'] ?? '');
 
+        if (empty($username) || empty($fullName) || empty($email)) {
+            set_flash('danger', "Please provide username, full name, and email address.");
+            header("Location: index.php?page=users");
+            exit;
+        }
+
+        // Duplicate username or email check
+        $dupStmt = $db->prepare("SELECT id FROM `users` WHERE `username` = ? OR `email` = ? LIMIT 1");
+        $dupStmt->execute([$username, $email]);
+        if ($dupStmt->fetch()) {
+            set_flash('danger', "Username '@$username' or email '$email' is already registered in the system.");
+            header("Location: index.php?page=users");
+            exit;
+        }
+
         $hash = password_hash($password, PASSWORD_BCRYPT);
 
-        $stmt = $db->prepare("
-            INSERT INTO `users` 
-            (`username`, `email`, `password_hash`, `full_name`, `phone`, `role_id`, `department_id`, `designation`, `consultation_fee`, `status`)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active')
-        ");
-        $stmt->execute([$username, $email, $hash, $fullName, $phone, $roleId, $deptId, $designation, $fee]);
+        try {
+            $stmt = $db->prepare("
+                INSERT INTO `users` 
+                (`username`, `email`, `password_hash`, `full_name`, `phone`, `role_id`, `department_id`, `designation`, `consultation_fee`, `status`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active')
+            ");
+            $stmt->execute([$username, $email, $hash, $fullName, $phone, $roleId, $deptId, $designation, $fee]);
+            $newUserId = (int)$db->lastInsertId();
 
-        AuditLogger::log('CREATE', 'users', $db->lastInsertId(), null, ['username' => $username, 'role_id' => $roleId]);
-        set_flash('success', "Staff account for '$fullName' created successfully.");
+            AuditLogger::log('CREATE', 'users', $newUserId, null, ['username' => $username, 'role_id' => $roleId, 'full_name' => $fullName]);
+            set_flash('success', "Staff account for '$fullName' (@$username) created successfully.");
+            header("Location: index.php?page=users");
+            exit;
+        } catch (Exception $e) {
+            set_flash('danger', "Failed to create staff account: " . $e->getMessage());
+            header("Location: index.php?page=users");
+            exit;
+        }
+    }
+
+    // 22.1 Toggle User Status (Active / Inactive)
+    if ($action === 'user_status_toggle') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin']);
+
+        $targetUserId = (int)($_POST['user_id'] ?? $_GET['user_id'] ?? 0);
+
+        if ($targetUserId === Auth::id()) {
+            set_flash('danger', "Security constraint: You cannot deactivate your own currently active administrative account.");
+            header("Location: index.php?page=users");
+            exit;
+        }
+
+        $uStmt = $db->prepare("SELECT id, username, full_name, status FROM `users` WHERE `id` = ?");
+        $uStmt->execute([$targetUserId]);
+        $targetUser = $uStmt->fetch();
+
+        if ($targetUser) {
+            $newStatus = ($targetUser['status'] === 'Active') ? 'Inactive' : 'Active';
+            $db->prepare("UPDATE `users` SET `status` = ? WHERE `id` = ?")->execute([$newStatus, $targetUserId]);
+
+            AuditLogger::log('UPDATE', 'users', $targetUserId, null, ['status' => $newStatus, 'username' => $targetUser['username']]);
+            set_flash('success', "Account '@{$targetUser['username']}' ({$targetUser['full_name']}) is now marked $newStatus.");
+        }
+        header("Location: index.php?page=users");
+        exit;
+    }
+
+    // 22.2 Reset Staff Password
+    if ($action === 'user_reset_password' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin']);
+
+        $targetUserId = (int)($_POST['user_id'] ?? 0);
+        $newPassword = $_POST['new_password'] ?? 'Admin@123';
+
+        if (empty($newPassword)) {
+            $newPassword = 'Admin@123';
+        }
+
+        $uStmt = $db->prepare("SELECT id, username, full_name FROM `users` WHERE `id` = ?");
+        $uStmt->execute([$targetUserId]);
+        $targetUser = $uStmt->fetch();
+
+        if ($targetUser) {
+            $hash = password_hash($newPassword, PASSWORD_BCRYPT);
+            $db->prepare("UPDATE `users` SET `password_hash` = ? WHERE `id` = ?")->execute([$hash, $targetUserId]);
+
+            AuditLogger::log('UPDATE', 'users', $targetUserId, null, ['action' => 'password_reset', 'username' => $targetUser['username']]);
+            set_flash('success', "Password for '@{$targetUser['username']}' ({$targetUser['full_name']}) has been reset successfully.");
+        }
         header("Location: index.php?page=users");
         exit;
     }
