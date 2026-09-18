@@ -2029,6 +2029,256 @@ if ($action !== null) {
         }
     }
 
+    // 12. Point of Sale (POS) Sale Checkout Action
+    if ($action === 'pos_sale_checkout' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        $db = Database::getConnection();
+
+        try {
+            $db->beginTransaction();
+
+            $customerType = clean_input($_POST['customer_type'] ?? 'walk_in');
+            $patientId = !empty($_POST['patient_id']) ? (int)$_POST['patient_id'] : null;
+            $customerName = clean_input($_POST['customer_name'] ?? '');
+            $customerPhone = clean_input($_POST['customer_phone'] ?? '');
+            $paymentMethod = clean_input($_POST['payment_method'] ?? 'Cash');
+            $paymentRef = clean_input($_POST['payment_reference'] ?? '');
+            $discountAmount = (float)($_POST['discount_amount'] ?? 0.00);
+            $taxAmount = (float)($_POST['tax_amount'] ?? 0.00);
+            $amountTendered = (float)($_POST['amount_tendered'] ?? 0.00);
+            $saleNotes = clean_input($_POST['sale_notes'] ?? '');
+            
+            $itemBatches = $_POST['item_batch_id'] ?? [];
+            $itemQuantities = $_POST['item_quantity'] ?? [];
+            $itemPrices = $_POST['item_unit_price'] ?? [];
+
+            if (empty($itemBatches) || !is_array($itemBatches)) {
+                throw new Exception("Please add at least one medication item to the POS cart.");
+            }
+
+            // If registered patient selected, get patient name and active encounter if available
+            $activeEncounterId = null;
+            if ($patientId > 0) {
+                $pRow = $db->prepare("SELECT first_name, last_name, phone_primary FROM `patients` WHERE `id` = ?");
+                $pRow->execute([$patientId]);
+                $pData = $pRow->fetch(PDO::FETCH_ASSOC);
+                if ($pData) {
+                    if (empty($customerName)) {
+                        $customerName = $pData['first_name'] . ' ' . $pData['last_name'];
+                    }
+                    if (empty($customerPhone)) {
+                        $customerPhone = $pData['phone_primary'];
+                    }
+                }
+
+                // Check active encounter
+                $encRow = $db->prepare("SELECT id, encounter_type FROM `encounters` WHERE `patient_id` = ? AND `encounter_status` = 'In-Progress' ORDER BY `id` DESC LIMIT 1");
+                $encRow->execute([$patientId]);
+                $encData = $encRow->fetch(PDO::FETCH_ASSOC);
+                if ($encData) {
+                    $activeEncounterId = (int)$encData['id'];
+                }
+            }
+
+            if (empty($customerName)) {
+                $customerName = 'Walk-in Customer';
+            }
+
+            // Validate items and calculate subtotal
+            $subtotal = 0.00;
+            $itemsToInsert = [];
+
+            foreach ($itemBatches as $idx => $batchId) {
+                $batchId = (int)$batchId;
+                $qty = (int)($itemQuantities[$idx] ?? 0);
+                $unitPrice = (float)($itemPrices[$idx] ?? 0.00);
+
+                if ($batchId <= 0 || $qty <= 0) {
+                    continue;
+                }
+
+                // Lock batch record for stock deduction
+                $batchStmt = $db->prepare("
+                    SELECT db.*, di.id AS drug_id, di.brand_name, di.generic_name, di.dosage_form, di.strength, di.unit_of_measure
+                    FROM `drug_batches` db
+                    JOIN `drug_items` di ON db.drug_item_id = di.id
+                    WHERE db.id = ? AND db.status = 'Active'
+                    FOR UPDATE
+                ");
+                $batchStmt->execute([$batchId]);
+                $batch = $batchStmt->fetch(PDO::FETCH_ASSOC);
+
+                if (!$batch) {
+                    throw new Exception("Selected medication batch is inactive or does not exist.");
+                }
+
+                if ($batch['current_quantity'] < $qty) {
+                    throw new Exception("Insufficient stock for {$batch['brand_name']} (Batch {$batch['batch_number']}). Requested: $qty, Available: {$batch['current_quantity']}.");
+                }
+
+                $lineTotal = round($qty * $unitPrice, 2);
+                $subtotal += $lineTotal;
+
+                // Deduct batch stock
+                $newQty = $batch['current_quantity'] - $qty;
+                $newStatus = ($newQty == 0) ? 'Depleted' : 'Active';
+
+                $updBatch = $db->prepare("UPDATE `drug_batches` SET `current_quantity` = ?, `status` = ? WHERE `id` = ?");
+                $updBatch->execute([$newQty, $newStatus, $batchId]);
+
+                // Sync central inventory_items if matching item exists
+                $db->prepare("
+                    UPDATE `inventory_items` 
+                    SET `current_stock` = GREATEST(0, `current_stock` - ?) 
+                    WHERE `item_name` LIKE ? OR `generic_name` LIKE ?
+                ")->execute([$qty, '%' . $batch['brand_name'] . '%', '%' . $batch['generic_name'] . '%']);
+
+                $itemsToInsert[] = [
+                    'batch_id' => $batchId,
+                    'drug_id' => $batch['drug_id'],
+                    'brand_name' => $batch['brand_name'],
+                    'generic_name' => $batch['generic_name'],
+                    'dosage_form' => $batch['dosage_form'],
+                    'strength' => $batch['strength'],
+                    'batch_number' => $batch['batch_number'],
+                    'expiry_date' => $batch['expiry_date'],
+                    'quantity' => $qty,
+                    'unit_price' => $unitPrice,
+                    'total_price' => $lineTotal
+                ];
+            }
+
+            if (empty($itemsToInsert)) {
+                throw new Exception("Please select valid items with quantity greater than 0.");
+            }
+
+            $netTotal = max(0, round($subtotal - $discountAmount + $taxAmount, 2));
+            $changeAmount = ($amountTendered > $netTotal) ? round($amountTendered - $netTotal, 2) : 0.00;
+
+            // Generate POS Invoice Number
+            $saleCount = (int)$db->query("SELECT COALESCE(MAX(id), 0) FROM `pharmacy_sales`")->fetchColumn();
+            $saleInvoiceNum = 'POS-' . date('Ymd') . '-' . str_pad((string)($saleCount + 1), 4, '0', STR_PAD_LEFT);
+
+            // Allowed payment methods
+            $allowedMethods = ['Cash', 'Card', 'Bill_to_Encounter', 'Bank_Transfer', 'Mobile_Wallet'];
+            if (!in_array($paymentMethod, $allowedMethods)) {
+                $paymentMethod = 'Cash';
+            }
+
+            // Insert into pharmacy_sales
+            $saleStmt = $db->prepare("
+                INSERT INTO `pharmacy_sales`
+                (`sale_invoice_number`, `prescription_id`, `encounter_id`, `patient_id`, `customer_name`, `customer_phone`, `subtotal`, `discount_amount`, `tax_amount`, `net_total`, `amount_tendered`, `change_amount`, `payment_method`, `payment_reference`, `sale_notes`, `dispensed_by`, `created_at`)
+                VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ");
+            $saleStmt->execute([
+                $saleInvoiceNum,
+                $activeEncounterId,
+                $patientId,
+                $customerName,
+                $customerPhone,
+                $subtotal,
+                $discountAmount,
+                $taxAmount,
+                $netTotal,
+                $amountTendered,
+                $changeAmount,
+                $paymentMethod,
+                $paymentRef,
+                $saleNotes,
+                Auth::id()
+            ]);
+            $saleId = (int)$db->lastInsertId();
+
+            // Insert items into pharmacy_sale_items
+            $psiStmt = $db->prepare("
+                INSERT INTO `pharmacy_sale_items` (`pharmacy_sale_id`, `drug_batch_id`, `quantity`, `unit_price`, `total_price`)
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            foreach ($itemsToInsert as $it) {
+                $psiStmt->execute([$saleId, $it['batch_id'], $it['quantity'], $it['unit_price'], $it['total_price']]);
+            }
+
+            // If registered patient with active encounter or bill-to-encounter selected:
+            if ($patientId && ($activeEncounterId || $paymentMethod === 'Bill_to_Encounter')) {
+                // Find or create bill
+                $chkBill = $db->prepare("SELECT id, bill_number, gross_amount, net_amount, paid_amount, balance_amount FROM `bills` WHERE `patient_id` = ? AND `payment_status` != 'Refunded' ORDER BY `id` DESC LIMIT 1");
+                $chkBill->execute([$patientId]);
+                $existingBill = $chkBill->fetch(PDO::FETCH_ASSOC);
+
+                if ($existingBill) {
+                    $billId = (int)$existingBill['id'];
+                    $billNumber = $existingBill['bill_number'];
+                    $newGross = (float)$existingBill['gross_amount'] + $netTotal;
+                    $newNet = (float)$existingBill['net_amount'] + $netTotal;
+                    $paid = (float)$existingBill['paid_amount'];
+                    if ($paymentMethod !== 'Bill_to_Encounter') {
+                        $paid += $netTotal; // Paid at POS counter
+                    }
+                    $newBal = max(0, $newNet - $paid);
+                    $newPayStatus = ($paid <= 0) ? 'Unpaid' : (($paid < $newNet) ? 'Partially-Paid' : 'Fully-Paid');
+
+                    $db->prepare("UPDATE `bills` SET `gross_amount` = ?, `net_amount` = ?, `paid_amount` = ?, `balance_amount` = ?, `payment_status` = ? WHERE `id` = ?")
+                       ->execute([$newGross, $newNet, $paid, $newBal, $newPayStatus, $billId]);
+                } else {
+                    $billCount = (int)$db->query("SELECT COALESCE(MAX(id), 0) FROM `bills`")->fetchColumn();
+                    $billNumber = 'INV-' . date('Y') . '-' . str_pad((string)($billCount + 1), 4, '0', STR_PAD_LEFT);
+                    $paid = ($paymentMethod !== 'Bill_to_Encounter') ? $netTotal : 0.00;
+                    $bal = max(0, $netTotal - $paid);
+                    $payStatus = ($paid >= $netTotal) ? 'Fully-Paid' : 'Unpaid';
+
+                    $db->prepare("
+                        INSERT INTO `bills` (`bill_number`, `encounter_id`, `patient_id`, `bill_type`, `bill_date`, `gross_amount`, `discount_amount`, `tax_amount`, `net_amount`, `paid_amount`, `balance_amount`, `payment_status`, `created_by`, `created_at`)
+                        VALUES (?, ?, ?, 'OPD', NOW(), ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                    ")->execute([$billNumber, $activeEncounterId, $patientId, $subtotal, $discountAmount, $taxAmount, $netTotal, $paid, $bal, $payStatus, Auth::id()]);
+                    $billId = (int)$db->lastInsertId();
+                }
+
+                // Insert line items
+                $biStmt = $db->prepare("
+                    INSERT INTO `bill_items` (`bill_id`, `item_type`, `reference_id`, `description`, `quantity`, `unit_price`, `subtotal`, `discount`, `net_price`, `created_at`)
+                    VALUES (?, 'Medication', ?, ?, ?, ?, ?, 0.00, ?, NOW())
+                ");
+                foreach ($itemsToInsert as $it) {
+                    $desc = "POS Pharmacy: " . $it['brand_name'] . " (" . $it['dosage_form'] . ") [Batch: " . $it['batch_number'] . ", Exp: " . date('m/y', strtotime($it['expiry_date'])) . "]";
+                    $biStmt->execute([$billId, $saleId, $desc, $it['quantity'], $it['unit_price'], $it['total_price'], $it['total_price']]);
+                }
+
+                // If cash/card payment paid at counter for registered patient:
+                if ($paymentMethod !== 'Bill_to_Encounter') {
+                    $rcptCount = (int)$db->query("SELECT COALESCE(MAX(id), 0) FROM `payments`")->fetchColumn();
+                    $receiptNum = 'REC-' . date('Ymd') . '-' . str_pad((string)($rcptCount + 1), 4, '0', STR_PAD_LEFT);
+                    $pMethodEnum = in_array($paymentMethod, ['Cash', 'Bank_Transfer']) ? $paymentMethod : ($paymentMethod === 'Card' ? 'Debit_Card' : 'Cash');
+                    
+                    $db->prepare("
+                        INSERT INTO `payments` (`receipt_number`, `bill_id`, `patient_id`, `amount_paid`, `payment_method`, `transaction_reference`, `payment_datetime`, `received_by`)
+                        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)
+                    ")->execute([$receiptNum, $billId, $patientId, $netTotal, $pMethodEnum, $saleInvoiceNum, Auth::id()]);
+                }
+            }
+
+            // Audit Log
+            AuditLogger::log('POS_SALE', 'pharmacy_sales', $saleId, null, [
+                'invoice' => $saleInvoiceNum,
+                'net_total' => $netTotal,
+                'customer' => $customerName,
+                'items_count' => count($itemsToInsert)
+            ]);
+
+            $db->commit();
+
+            set_flash('success', "POS Sale $saleInvoiceNum completed successfully! Total: Rs. " . number_format($netTotal, 2));
+            header("Location: index.php?page=dashboard&pos_sale_id=" . $saleId . "#dashboard-pos");
+            exit;
+
+        } catch (Exception $e) {
+            $db->rollBack();
+            set_flash('danger', "POS Transaction Failed: " . $e->getMessage());
+            header("Location: index.php?page=dashboard#dashboard-pos");
+            exit;
+        }
+    }
+
     // Default fallback if action unknown
     header("Location: index.php?page=dashboard");
     exit;
@@ -2051,6 +2301,12 @@ if ($page === 'print_credentials') {
     Auth::requireLogin();
     Auth::requireRole(['super_admin', 'hospital_admin']);
     require_once __DIR__ . '/views/admin/print_credentials.php';
+    exit;
+}
+
+if ($page === 'print_pos_receipt') {
+    Auth::requireLogin();
+    require_once __DIR__ . '/views/pos/print_receipt.php';
     exit;
 }
 
