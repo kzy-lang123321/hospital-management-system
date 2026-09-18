@@ -41,7 +41,8 @@ INSERT INTO `roles` (`id`, `role_name`, `slug`, `description`, `is_system_role`)
 (5, 'Pharmacist', 'pharmacist', 'Prescription review, drug dispensing, batch and inventory management', 1),
 (6, 'Laboratory Technician', 'lab_technician', 'Specimen intake, analyzer operations and lab result entry', 1),
 (7, 'Billing Cashier', 'cashier', 'Patient invoice generation, payments, refunds and cash drawer balancing', 1),
-(8, 'Front Desk Receptionist', 'receptionist', 'Patient registration, appointments booking and token queue check-in', 1);
+(8, 'Front Desk Receptionist', 'receptionist', 'Patient registration, appointments booking and token queue check-in', 1),
+(9, 'Radiologist', 'radiologist', 'Radiology imaging review, PACS DICOM study evaluation and radiology diagnostic reporting', 1);
 
 -- 4. Users (All pass: Admin@123)
 TRUNCATE TABLE `users`;
@@ -56,7 +57,8 @@ VALUES
 (6, 'pharm.kamran', 'kamran.pharm@hayatmedicare.org', '$2y$10$aUMC.pYhQA60ztp/Lt4VvOhGCn54gafX5zFg5rHtxcavhX8xRtAtG', 'Kamran Akram', '+92 313 7776655', 5, 11, 'Chief Pharmacist', 'Pharm-D, RPh', 0.00, 'Active'),
 (7, 'lab.usman', 'usman.lab@hayatmedicare.org', '$2y$10$aUMC.pYhQA60ztp/Lt4VvOhGCn54gafX5zFg5rHtxcavhX8xRtAtG', 'Dr. Usman Ghani', '+92 315 9998877', 6, 8, 'Senior Clinical Pathologist', 'MBBS, M.Phil (Hematology)', 0.00, 'Active'),
 (8, 'cashier.hassan', 'hassan.billing@hayatmedicare.org', '$2y$10$aUMC.pYhQA60ztp/Lt4VvOhGCn54gafX5zFg5rHtxcavhX8xRtAtG', 'Hassan Raza', '+92 334 2221100', 7, 12, 'Senior Billing Executive', 'B.Com, Accounts Specialist', 0.00, 'Active'),
-(9, 'reception.sana', 'sana.rec@hayatmedicare.org', '$2y$10$aUMC.pYhQA60ztp/Lt4VvOhGCn54gafX5zFg5rHtxcavhX8xRtAtG', 'Sana Gul', '+92 336 1122334', 8, 1, 'Front Desk Lead Officer', 'BBA, Patient Relations', 0.00, 'Active');
+(9, 'reception.sana', 'sana.rec@hayatmedicare.org', '$2y$10$aUMC.pYhQA60ztp/Lt4VvOhGCn54gafX5zFg5rHtxcavhX8xRtAtG', 'Sana Gul', '+92 336 1122334', 8, 1, 'Front Desk Lead Officer', 'BBA, Patient Relations', 0.00, 'Active'),
+(10, 'radio.farooq', 'farooq.radiology@hayatmedicare.org', '$2y$10$aUMC.pYhQA60ztp/Lt4VvOhGCn54gafX5zFg5rHtxcavhX8xRtAtG', 'Dr. Farooq Khan', '+92 332 5556677', 9, 9, 'Consultant Radiologist', 'MBBS, FCPS (Radiology)', 2200.00, 'Active');
 
 -- 5. Wards, Rooms & Beds
 TRUNCATE TABLE `wards`;

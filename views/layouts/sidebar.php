@@ -99,7 +99,7 @@ function nav_active(string $pageName, string $currentPage): string {
                 </a>
                 <?php endif; ?>
 
-                <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'doctor', 'lab_technician', 'nurse'])): ?>
+                <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'radiologist', 'doctor', 'lab_technician', 'nurse'])): ?>
                 <a href="index.php?page=radiology" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('radiology', $currentPage) ?>">
                     <i class="fa-solid fa-x-ray w-5 text-center text-indigo-400"></i>
                     <span>Radiology & PACS</span>

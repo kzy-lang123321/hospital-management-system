@@ -3,7 +3,7 @@
  * Hospital Management System (HMS) - Radiology & Diagnostic Imaging Workspace
  */
 
-Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'lab_technician', 'nurse', 'receptionist']);
+Auth::requireRole(['super_admin', 'hospital_admin', 'radiologist', 'doctor', 'lab_technician', 'nurse', 'receptionist']);
 
 $db = Database::getConnection();
 

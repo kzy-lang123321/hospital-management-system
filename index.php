@@ -1194,7 +1194,7 @@ if ($action !== null) {
     // Radiology Order Store Action
     if ($action === 'radiology_order_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'receptionist']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'radiologist', 'receptionist']);
 
         $encounterId = (int)($_POST['encounter_id'] ?? 0);
         $serviceId = (int)($_POST['service_id'] ?? 0);
@@ -1220,7 +1220,7 @@ if ($action !== null) {
     // Radiology Report Save Action
     if ($action === 'radiology_report_save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'lab_technician']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'radiologist', 'lab_technician']);
 
         $orderId = (int)($_POST['radiology_order_id'] ?? 0);
         $technique = clean_input($_POST['technique_used'] ?? '');
@@ -1699,28 +1699,108 @@ if ($page === 'login') {
 // All inner pages require authentication
 Auth::requireLogin();
 
-// Map route to view files and titles
+// Map route to view files, titles, and allowed RBAC roles
 $routes = [
-    'dashboard' => ['file' => 'views/dashboard/index.php', 'title' => 'Executive & Clinical Dashboard'],
-    'patients' => ['file' => 'views/patients/index.php', 'title' => 'Patient Directory (Master Patient Index)'],
-    'patient_create' => ['file' => 'views/patients/create.php', 'title' => 'Patient Registration'],
-    'patient_profile' => ['file' => 'views/patients/view.php', 'title' => 'Patient 360° Comprehensive Profile'],
-    'appointments' => ['file' => 'views/appointments/index.php', 'title' => 'Appointments & Token Scheduling'],
-    'emergency' => ['file' => 'views/emergency/index.php', 'title' => 'Emergency & Trauma Care (ER)'],
-    'opd_consultation' => ['file' => 'views/opd/consultation.php', 'title' => 'Clinician Workbench (OPD)'],
-    'ipd_beds' => ['file' => 'views/ipd/beds.php', 'title' => 'Wards & Interactive Bed Rack (IPD)'],
-    'ot' => ['file' => 'views/ot/index.php', 'title' => 'Operation Theatre (OT) Suites'],
-    'pharmacy' => ['file' => 'views/pharmacy/index.php', 'title' => 'Pharmacy & Dispensing Counter'],
-    'laboratory' => ['file' => 'views/laboratory/index.php', 'title' => 'Clinical Pathology & Laboratory'],
-    'radiology' => ['file' => 'views/radiology/index.php', 'title' => 'Radiology PACS & Imaging'],
-    'blood_bank' => ['file' => 'views/blood_bank/index.php', 'title' => 'Blood Bank & Transfusion Medicine'],
-    'billing' => ['file' => 'views/billing/index.php', 'title' => 'Centralized Billing & Cashier Desk'],
-    'insurance' => ['file' => 'views/insurance/index.php', 'title' => 'Insurance & Corporate TPA Claims'],
-    'inventory' => ['file' => 'views/inventory/index.php', 'title' => 'Central Inventory & Procurement'],
-    'reports' => ['file' => 'views/reports/index.php', 'title' => 'Reports & Operational Analytics'],
-    'settings' => ['file' => 'views/admin/settings.php', 'title' => 'Hospital Masters & Dynamic Settings'],
-    'users' => ['file' => 'views/admin/users.php', 'title' => 'Hospital Staff & System Accounts'],
-    'audit_logs' => ['file' => 'views/admin/audit_logs.php', 'title' => 'Forensic Security & Audit Trail'],
+    'dashboard' => [
+        'file' => 'views/dashboard/index.php', 
+        'title' => 'Executive & Clinical Dashboard',
+        'roles' => ['super_admin', 'hospital_admin', 'doctor', 'nurse', 'pharmacist', 'lab_technician', 'radiologist', 'cashier', 'receptionist']
+    ],
+    'patients' => [
+        'file' => 'views/patients/index.php', 
+        'title' => 'Patient Directory (Master Patient Index)',
+        'roles' => ['super_admin', 'hospital_admin', 'receptionist', 'doctor', 'nurse', 'cashier']
+    ],
+    'patient_create' => [
+        'file' => 'views/patients/create.php', 
+        'title' => 'Patient Registration',
+        'roles' => ['super_admin', 'hospital_admin', 'receptionist', 'doctor', 'nurse', 'cashier']
+    ],
+    'patient_profile' => [
+        'file' => 'views/patients/view.php', 
+        'title' => 'Patient 360° Comprehensive Profile',
+        'roles' => ['super_admin', 'hospital_admin', 'receptionist', 'doctor', 'nurse', 'cashier', 'pharmacist', 'lab_technician', 'radiologist']
+    ],
+    'appointments' => [
+        'file' => 'views/appointments/index.php', 
+        'title' => 'Appointments & Token Scheduling',
+        'roles' => ['super_admin', 'hospital_admin', 'receptionist', 'doctor', 'nurse']
+    ],
+    'emergency' => [
+        'file' => 'views/emergency/index.php', 
+        'title' => 'Emergency & Trauma Care (ER)',
+        'roles' => ['super_admin', 'hospital_admin', 'doctor', 'nurse', 'receptionist']
+    ],
+    'opd_consultation' => [
+        'file' => 'views/opd/consultation.php', 
+        'title' => 'Clinician Workbench (OPD)',
+        'roles' => ['super_admin', 'hospital_admin', 'doctor', 'nurse', 'receptionist']
+    ],
+    'ipd_beds' => [
+        'file' => 'views/ipd/beds.php', 
+        'title' => 'Wards & Interactive Bed Rack (IPD)',
+        'roles' => ['super_admin', 'hospital_admin', 'nurse', 'doctor', 'receptionist']
+    ],
+    'ot' => [
+        'file' => 'views/ot/index.php', 
+        'title' => 'Operation Theatre (OT) Suites',
+        'roles' => ['super_admin', 'hospital_admin', 'doctor', 'nurse']
+    ],
+    'pharmacy' => [
+        'file' => 'views/pharmacy/index.php', 
+        'title' => 'Pharmacy & Dispensing Counter',
+        'roles' => ['super_admin', 'hospital_admin', 'pharmacist', 'doctor']
+    ],
+    'laboratory' => [
+        'file' => 'views/laboratory/index.php', 
+        'title' => 'Clinical Pathology & Laboratory',
+        'roles' => ['super_admin', 'hospital_admin', 'lab_technician', 'doctor']
+    ],
+    'radiology' => [
+        'file' => 'views/radiology/index.php', 
+        'title' => 'Radiology PACS & Imaging',
+        'roles' => ['super_admin', 'hospital_admin', 'radiologist', 'doctor', 'lab_technician', 'nurse', 'receptionist']
+    ],
+    'blood_bank' => [
+        'file' => 'views/blood_bank/index.php', 
+        'title' => 'Blood Bank & Transfusion Medicine',
+        'roles' => ['super_admin', 'hospital_admin', 'doctor', 'lab_technician', 'nurse']
+    ],
+    'billing' => [
+        'file' => 'views/billing/index.php', 
+        'title' => 'Centralized Billing & Cashier Desk',
+        'roles' => ['super_admin', 'hospital_admin', 'cashier']
+    ],
+    'insurance' => [
+        'file' => 'views/insurance/index.php', 
+        'title' => 'Insurance & Corporate TPA Claims',
+        'roles' => ['super_admin', 'hospital_admin', 'cashier', 'receptionist']
+    ],
+    'inventory' => [
+        'file' => 'views/inventory/index.php', 
+        'title' => 'Central Inventory & Procurement',
+        'roles' => ['super_admin', 'hospital_admin', 'pharmacist']
+    ],
+    'reports' => [
+        'file' => 'views/reports/index.php', 
+        'title' => 'Reports & Operational Analytics',
+        'roles' => ['super_admin', 'hospital_admin', 'cashier']
+    ],
+    'settings' => [
+        'file' => 'views/admin/settings.php', 
+        'title' => 'Hospital Masters & Dynamic Settings',
+        'roles' => ['super_admin', 'hospital_admin']
+    ],
+    'users' => [
+        'file' => 'views/admin/users.php', 
+        'title' => 'Hospital Staff & System Accounts',
+        'roles' => ['super_admin', 'hospital_admin']
+    ],
+    'audit_logs' => [
+        'file' => 'views/admin/audit_logs.php', 
+        'title' => 'Forensic Security & Audit Trail',
+        'roles' => ['super_admin', 'hospital_admin']
+    ],
 ];
 
 if (!isset($routes[$page])) {
@@ -1729,6 +1809,11 @@ if (!isset($routes[$page])) {
 
 $targetRoute = $routes[$page];
 $pageTitle = $targetRoute['title'];
+
+// Enforce strict Role-Based Access Control (RBAC) per workspace
+if (!empty($targetRoute['roles'])) {
+    Auth::requireRole($targetRoute['roles']);
+}
 
 // Render Layout & View
 require_once __DIR__ . '/views/layouts/header.php';
