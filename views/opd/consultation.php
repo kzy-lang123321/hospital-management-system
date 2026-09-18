@@ -85,11 +85,16 @@ if ($encounterId > 0) {
         $pastLabStmt = $db->prepare("
             SELECT lo.order_number, lo.order_datetime, lt.test_name, lt.specimen_type,
                    loi.item_status, loi.sample_barcode,
-                   lr.parameter_name, lr.observed_value, lr.unit_of_measure, lr.reference_range, lr.flag
+                   ltp.parameter_name, 
+                   lr.result_value AS observed_value, 
+                   ltp.unit AS unit_of_measure, 
+                   ltp.reference_range, 
+                   lr.abnormal_flag AS flag
             FROM `lab_orders` lo
             JOIN `lab_order_items` loi ON lo.id = loi.lab_order_id
             JOIN `lab_tests` lt ON loi.lab_test_id = lt.id
             LEFT JOIN `lab_results` lr ON loi.id = lr.lab_order_item_id
+            LEFT JOIN `lab_test_parameters` ltp ON lr.parameter_id = ltp.id
             JOIN `encounters` e ON lo.encounter_id = e.id
             WHERE e.patient_id = ? AND loi.item_status = 'Verified'
             ORDER BY lo.order_datetime DESC LIMIT 20
