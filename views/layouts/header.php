@@ -139,6 +139,19 @@ $hProfile = hospital_profile();
             .print-only { display: block !important; }
             body { background: white !important; }
         }
+
+        /* Mobile Touch & Table Usability */
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+        .custom-scrollbar, .overflow-x-auto, .overflow-y-auto {
+            -webkit-overflow-scrolling: touch;
+        }
+        @media (max-width: 768px) {
+            .form-input {
+                font-size: 16px !important; /* Prevents auto-zoom on iOS inputs */
+            }
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased flex h-screen overflow-hidden">

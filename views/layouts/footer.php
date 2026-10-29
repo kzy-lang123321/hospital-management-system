@@ -43,8 +43,51 @@ $flash = get_flash();
     </script>
     <?php endif; ?>
 
-    <!-- Global Keyboard Shortcut: Ctrl + / focuses Universal Search -->
+    <!-- Mobile Drawer & Global Handlers -->
     <script>
+        // Mobile Sidebar Drawer Management
+        (function() {
+            const mobileBtn = document.getElementById('mobileMenuBtn');
+            const closeBtn = document.getElementById('closeSidebarBtn');
+            const sidebar = document.getElementById('mainSidebar');
+            const backdrop = document.getElementById('sidebarBackdrop');
+
+            function openMobileNav() {
+                if (!sidebar) return;
+                sidebar.classList.remove('-translate-x-full');
+                if (backdrop) backdrop.classList.remove('hidden');
+                document.body.classList.add('overflow-hidden');
+            }
+
+            function closeMobileNav() {
+                if (!sidebar) return;
+                sidebar.classList.add('-translate-x-full');
+                if (backdrop) backdrop.classList.add('hidden');
+                document.body.classList.remove('overflow-hidden');
+            }
+
+            if (mobileBtn) mobileBtn.addEventListener('click', openMobileNav);
+            if (closeBtn) closeBtn.addEventListener('click', closeMobileNav);
+            if (backdrop) backdrop.addEventListener('click', closeMobileNav);
+
+            // Close on escape key
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') closeMobileNav();
+            });
+
+            // Close drawer when navigating to a link on mobile
+            if (sidebar) {
+                sidebar.querySelectorAll('a').forEach(function(link) {
+                    link.addEventListener('click', function() {
+                        if (window.innerWidth < 768) {
+                            closeMobileNav();
+                        }
+                    });
+                });
+            }
+        })();
+
+        // Global Keyboard Shortcut: Ctrl + / focuses Universal Search
         document.addEventListener('keydown', function(e) {
             if (e.ctrlKey && e.key === '/') {
                 e.preventDefault();

@@ -1,23 +1,23 @@
 <?php
 /**
- * Hospital Management System (HMS) - Top Bar
+ * Hospital Management System (HMS) - Top Bar (Mobile-Responsive)
  */
 $hProfile = hospital_profile();
 ?>
-<header class="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between flex-shrink-0 no-print">
-    <!-- Left: Page Title & Breadcrumb -->
-    <div class="flex items-center gap-3">
-        <button id="mobileMenuBtn" class="md:hidden text-slate-500 hover:text-slate-700">
+<header class="h-16 bg-white border-b border-slate-200 px-3 sm:px-6 flex items-center justify-between flex-shrink-0 no-print gap-2">
+    <!-- Left: Hamburger Button & Page Title -->
+    <div class="flex items-center gap-2 sm:gap-3 overflow-hidden">
+        <button id="mobileMenuBtn" type="button" class="md:hidden flex items-center justify-center w-10 h-10 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors focus:outline-none flex-shrink-0" aria-label="Open Navigation Menu">
             <i class="fa-solid fa-bars text-lg"></i>
         </button>
-        <div>
-            <h2 class="font-bold text-slate-800 text-base leading-tight"><?= clean_input($pageTitle ?? 'Hospital Management') ?></h2>
-            <p class="text-xs text-slate-500"><?= htmlspecialchars($hProfile['hospital_name']) ?> &bull; Active Session</p>
+        <div class="min-w-0">
+            <h2 class="font-bold text-slate-800 text-sm sm:text-base leading-tight truncate"><?= clean_input($pageTitle ?? 'Hospital Management') ?></h2>
+            <p class="text-[11px] sm:text-xs text-slate-500 truncate hidden xs:block"><?= htmlspecialchars($hProfile['hospital_name']) ?></p>
         </div>
     </div>
 
     <!-- Center: Universal Patient Search (Omni-Box) -->
-    <div class="hidden sm:flex items-center flex-1 max-w-md mx-6">
+    <div class="hidden md:flex items-center flex-1 max-w-md mx-4">
         <form action="index.php" method="GET" class="w-full relative">
             <input type="hidden" name="page" value="patients">
             <div class="relative">
@@ -38,18 +38,18 @@ $hProfile = hospital_profile();
     </div>
 
     <!-- Right: Quick Status & Emergency Access -->
-    <div class="flex items-center gap-4">
+    <div class="flex items-center gap-2 sm:gap-4 flex-shrink-0">
         <!-- Emergency Hotline Indicator from Database -->
-        <div class="hidden lg:flex items-center gap-2 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-md text-xs text-rose-700">
+        <div class="hidden xl:flex items-center gap-2 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-md text-xs text-rose-700">
             <span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
             <span class="font-semibold">ER Hotline:</span> <?= htmlspecialchars($hProfile['emergency_hotline'] ?? '1122') ?>
         </div>
 
         <!-- Role Badge -->
-        <div class="flex items-center gap-2 border-l border-slate-200 pl-4">
-            <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-medical-50 text-medical-700 border border-medical-200">
+        <div class="flex items-center gap-2 sm:border-l sm:border-slate-200 sm:pl-4">
+            <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-medical-50 text-medical-700 border border-medical-200 max-w-[120px] sm:max-w-none truncate" title="<?= htmlspecialchars($currentUser['role_name'] ?? 'User') ?>">
                 <i class="fa-solid fa-user-shield text-[10px] mr-1"></i>
-                <?= htmlspecialchars($currentUser['role_name'] ?? 'User') ?>
+                <span class="truncate"><?= htmlspecialchars($currentUser['role_name'] ?? 'User') ?></span>
             </span>
         </div>
     </div>

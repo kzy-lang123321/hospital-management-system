@@ -2443,7 +2443,7 @@ if (!empty($targetRoute['roles'])) {
 // Render Layout & View
 require_once __DIR__ . '/views/layouts/header.php';
 require_once __DIR__ . '/views/layouts/sidebar.php';
-echo '<div class="flex-1 flex flex-col h-full overflow-hidden">';
+echo '<div class="flex-1 flex flex-col h-full w-full min-w-0 overflow-hidden">';
 require_once __DIR__ . '/views/layouts/topbar.php';
 require_once __DIR__ . '/' . $targetRoute['file'];
 echo '</div>';

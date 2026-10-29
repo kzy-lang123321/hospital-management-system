@@ -1,6 +1,6 @@
 <?php
 /**
- * Hospital Management System (HMS) - Sidebar Navigation
+ * Hospital Management System (HMS) - Sidebar Navigation (Mobile-Responsive Drawer)
  */
 $currentPage = $_GET['page'] ?? 'dashboard';
 $userRole = Auth::role();
@@ -12,17 +12,26 @@ function nav_active(string $pageName, string $currentPage): string {
         : 'text-slate-300 hover:bg-slate-800 hover:text-white';
 }
 ?>
-<!-- Sidebar Container -->
-<aside class="w-64 bg-navy-950 text-slate-300 flex flex-col flex-shrink-0 h-full border-r border-slate-800 no-print">
+<!-- Mobile Overlay Backdrop -->
+<div id="sidebarBackdrop" class="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-40 hidden md:hidden transition-opacity duration-300"></div>
+
+<!-- Sidebar Drawer -->
+<aside id="mainSidebar" class="fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-navy-950 text-slate-300 flex flex-col flex-shrink-0 h-full border-r border-slate-800 no-print transform -translate-x-full transition-transform duration-300 ease-in-out md:static md:w-64 md:translate-x-0 md:z-auto">
     <!-- Brand / Hospital Identity -->
-    <div class="h-16 flex items-center px-4 bg-navy-900 border-b border-slate-800 gap-3">
-        <div class="w-10 h-10 rounded-lg bg-medical-600 flex items-center justify-center text-white font-bold text-xl shadow-md flex-shrink-0">
-            <i class="fa-solid fa-house-chimney-medical"></i>
+    <div class="h-16 flex items-center justify-between px-4 bg-navy-900 border-b border-slate-800 gap-3">
+        <div class="flex items-center gap-3 overflow-hidden">
+            <div class="w-10 h-10 rounded-lg bg-medical-600 flex items-center justify-center text-white font-bold text-xl shadow-md flex-shrink-0">
+                <i class="fa-solid fa-house-chimney-medical"></i>
+            </div>
+            <div class="leading-tight overflow-hidden">
+                <h1 class="font-bold text-white text-sm truncate tracking-tight uppercase"><?= htmlspecialchars($hProfile['hospital_name']) ?></h1>
+                <p class="text-[11px] text-medical-400 font-medium truncate"><?= htmlspecialchars($hProfile['tagline'] ?? 'Clinical Care') ?></p>
+            </div>
         </div>
-        <div class="leading-tight overflow-hidden">
-            <h1 class="font-bold text-white text-sm truncate tracking-tight uppercase"><?= htmlspecialchars($hProfile['hospital_name']) ?></h1>
-            <p class="text-[11px] text-medical-400 font-medium truncate"><?= htmlspecialchars($hProfile['tagline'] ?? 'Clinical Care') ?></p>
-        </div>
+        <!-- Close button for mobile -->
+        <button id="closeSidebarBtn" type="button" class="md:hidden text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 transition-colors" aria-label="Close Navigation">
+            <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
     </div>
 
     <!-- Navigation Links -->
