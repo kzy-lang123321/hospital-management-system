@@ -53,6 +53,29 @@ mysql -u root -p < database/clean_transactions.sql
 
 ---
 
+## 🖥️ Desktop Application
+
+The Hospital Management System can be launched as a native desktop application with two options:
+
+### Option 1: Electron Desktop App (Recommended for packaging & custom native menus)
+```bash
+# Install dependencies (first time only)
+npm install
+
+# Run Desktop Application
+npm start
+```
+
+### Option 2: 1-Click Instant Windows Desktop Launcher (Zero NPM install required)
+- Double click **`HMS-Desktop.bat`** (or **`HMS-Desktop-Silent.vbs`** for borderless silent start).
+- Automatically verifies MySQL, starts the local PHP server, and opens in a standalone, dedicated desktop window.
+- To create a Windows Desktop icon, run:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\create-desktop-shortcut.ps1
+  ```
+
+---
+
 ## 🔑 Default Seeded Accounts
 
 All accounts use the default password: `Admin@123`

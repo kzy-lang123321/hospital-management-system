@@ -1,0 +1,34 @@
+{
+  "name": "hospital-management-system-desktop",
+  "version": "1.0.0",
+  "description": "Hospital Management System (HMS) - Desktop Application",
+  "main": "electron-main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": [
+    "hospital",
+    "management",
+    "system",
+    "hms",
+    "desktop",
+    "electron"
+  ],
+  "author": "MEGA-TECH",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.0"
+  },
+  "build": {
+    "appId": "com.hms.desktop",
+    "productName": "Hospital Management System",
+    "win": {
+      "target": "nsis"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

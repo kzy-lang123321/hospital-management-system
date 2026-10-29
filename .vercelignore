@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.git/
+.github/
+*.exe
+*.bat
+*.vbs
+*.lnk
+*.ps1
+tests/
+exports/*.pdf
+electron-main.js
+package-lock.json
+scripts/Launcher.cs
