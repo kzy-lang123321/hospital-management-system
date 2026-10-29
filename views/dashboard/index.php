@@ -245,6 +245,82 @@ foreach ($popularKeywords as $kw) {
         <i class="fa-solid fa-staff-snake absolute right-4 -bottom-6 text-white/5 text-9xl pointer-events-none"></i>
     </div>
 
+    <!-- Hospital Owner Setup & Onboarding Wizard (Requirement 18.E) -->
+    <?php if (Auth::isHospitalOwner() && !isset($_COOKIE['dismiss_setup_wizard_' . $hId])): ?>
+    <?php
+    $hInfo = hospital_profile();
+    $staffCount = (int)$db->query("SELECT COUNT(*) FROM `users` WHERE hospital_id = {$hId}")->fetchColumn();
+    $deptCount = (int)$db->query("SELECT COUNT(*) FROM `departments` WHERE hospital_id = {$hId}")->fetchColumn();
+    $hasGeofence = !empty($hInfo['hospital_latitude']) && !empty($hInfo['hospital_longitude']);
+    
+    $completedSteps = 0;
+    if (!empty($hInfo['hospital_name'])) $completedSteps++;
+    if ($deptCount >= 3) $completedSteps++;
+    if ($staffCount >= 2) $completedSteps++;
+    if ($hasGeofence) $completedSteps++;
+    if (!empty($hInfo['mrn_prefix'])) $completedSteps++;
+    $progressPct = round(($completedSteps / 5) * 100);
+    ?>
+    <div class="bg-gradient-to-r from-teal-950 via-slate-900 to-indigo-950 rounded-2xl p-6 border border-teal-800/60 shadow-xl text-white space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-xl bg-teal-500/20 border border-teal-500/40 text-teal-400 flex items-center justify-center text-xl flex-shrink-0">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-500/20 text-teal-300 border border-teal-500/30 uppercase">Hospital Setup Wizard</span>
+                        <span class="text-xs text-slate-400 font-mono"><?= $progressPct ?>% Ready</span>
+                    </div>
+                    <h3 class="text-lg font-bold text-white mt-0.5">Welcome to your new Hospital Workspace</h3>
+                    <p class="text-xs text-slate-300">Complete these initial steps to fully configure your facility's clinical departments, staff, and attendance.</p>
+                </div>
+            </div>
+            <button onclick="document.cookie='dismiss_setup_wizard_<?= $hId ?>=1;path=/;max-age=86400';this.closest('.bg-gradient-to-r').remove()" class="text-slate-400 hover:text-white text-xs px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 transition-all self-start sm:self-auto">
+                Dismiss for now
+            </button>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2 text-xs">
+            <a href="index.php?page=hospital_customization" class="p-3 rounded-xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/70 transition-all flex items-center gap-2.5">
+                <i class="fa-solid fa-circle-check <?= !empty($hInfo['hospital_name']) ? 'text-emerald-400' : 'text-slate-500' ?> text-base"></i>
+                <div>
+                    <div class="font-bold text-white">1. Hospital Profile</div>
+                    <div class="text-[10px] text-slate-400">Name, logo, currency</div>
+                </div>
+            </a>
+            <a href="index.php?page=settings" class="p-3 rounded-xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/70 transition-all flex items-center gap-2.5">
+                <i class="fa-solid fa-circle-check <?= $deptCount >= 3 ? 'text-emerald-400' : 'text-slate-500' ?> text-base"></i>
+                <div>
+                    <div class="font-bold text-white">2. Departments</div>
+                    <div class="text-[10px] text-slate-400"><?= $deptCount ?> Configured</div>
+                </div>
+            </a>
+            <a href="index.php?page=users" class="p-3 rounded-xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/70 transition-all flex items-center gap-2.5">
+                <i class="fa-solid fa-circle-check <?= $staffCount >= 2 ? 'text-emerald-400' : 'text-slate-500' ?> text-base"></i>
+                <div>
+                    <div class="font-bold text-white">3. Staff Accounts</div>
+                    <div class="text-[10px] text-slate-400"><?= $staffCount ?> Accounts Active</div>
+                </div>
+            </a>
+            <a href="index.php?page=attendance" class="p-3 rounded-xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/70 transition-all flex items-center gap-2.5">
+                <i class="fa-solid fa-circle-check <?= $hasGeofence ? 'text-emerald-400' : 'text-slate-500' ?> text-base"></i>
+                <div>
+                    <div class="font-bold text-white">4. GPS Geofence</div>
+                    <div class="text-[10px] text-slate-400">Perimeter radius & shifts</div>
+                </div>
+            </a>
+            <a href="index.php?page=hospital_customization" class="p-3 rounded-xl bg-slate-800/70 hover:bg-slate-800 border border-slate-700/70 transition-all flex items-center gap-2.5">
+                <i class="fa-solid fa-circle-check <?= !empty($hInfo['mrn_prefix']) ? 'text-emerald-400' : 'text-slate-500' ?> text-base"></i>
+                <div>
+                    <div class="font-bold text-white">5. MRN & Billing</div>
+                    <div class="text-[10px] text-slate-400"><?= htmlspecialchars($hInfo['mrn_prefix'] ?? 'MRN') ?> Prefix</div>
+                </div>
+            </a>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <?php if (isset($_GET['pos_sale_id'])): 
         $completedSaleId = (int)$_GET['pos_sale_id'];
         $completedSale = $db->query("SELECT sale_invoice_number, customer_name, net_total FROM `pharmacy_sales` WHERE id = $completedSaleId")->fetch(PDO::FETCH_ASSOC);

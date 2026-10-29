@@ -47,6 +47,10 @@ function nav_active(string $pageName, string $currentPage): string {
                 <i class="fa-solid fa-chart-pie w-4 text-center text-indigo-400"></i>
                 <span>Platform Telemetry</span>
             </a>
+            <a href="index.php?page=developer_registrations" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all <?= nav_active('developer_registrations', $currentPage) ?>">
+                <i class="fa-solid fa-file-signature w-4 text-center text-teal-400"></i>
+                <span>Hospital Registrations</span>
+            </a>
             <a href="index.php?page=developer_hospitals" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all <?= nav_active('developer_hospitals', $currentPage) ?>">
                 <i class="fa-solid fa-hospital-user w-4 text-center text-indigo-400"></i>
                 <span>Hospital Facilities</span>

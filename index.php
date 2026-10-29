@@ -67,6 +67,42 @@ if ($action !== null) {
         exit;
     }
 
+    // 2.0.2 Public Hospital Registration Submission (Public - No Login Required)
+    if ($action === 'public_register_hospital' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        require_once __DIR__ . '/core/RegistrationService.php';
+
+        $res = RegistrationService::submitRequest($_POST);
+        if ($res['success']) {
+            set_flash('success', "Your hospital registration request has been submitted! Tracking Code: {$res['tracking_code']}. Please save this tracking code.");
+            header("Location: index.php?page=registration_status&code=" . urlencode($res['tracking_code']) . "&email=" . urlencode($res['applicant_email']));
+            exit;
+        } else {
+            set_flash('danger', $res['message']);
+            header("Location: index.php?page=register_hospital");
+            exit;
+        }
+    }
+
+    // 2.0.3 Applicant Additional Information Clarification (Public - No Login Required)
+    if ($action === 'applicant_submit_clarification' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        require_once __DIR__ . '/core/RegistrationService.php';
+
+        $code = clean_input($_POST['tracking_code'] ?? '');
+        $email = clean_input($_POST['email'] ?? '');
+        $reply = clean_input($_POST['reply_notes'] ?? '');
+
+        $res = RegistrationService::updateApplicantInfo($code, $email, $reply);
+        if ($res['success']) {
+            set_flash('success', $res['message']);
+        } else {
+            set_flash('danger', $res['message']);
+        }
+        header("Location: index.php?page=registration_status&code=" . urlencode($code) . "&email=" . urlencode($email));
+        exit;
+    }
+
     // ALL SUBSEQUENT ACTIONS REQUIRE AUTHENTICATION
     Auth::requireLogin();
 
@@ -230,6 +266,59 @@ if ($action !== null) {
             set_flash('success', "Hospital '{$row['hospital_name']}' status updated to $newStatus.");
         }
         header("Location: index.php?page=developer_hospitals");
+        exit;
+    }
+
+    // 2.3.1.2.1 Developer Approve Registration & Provision Hospital
+    if ($action === 'developer_approve_registration' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['developer', 'platform_admin']);
+        require_once __DIR__ . '/core/RegistrationService.php';
+
+        $reqId = (int)($_POST['request_id'] ?? 0);
+        $res = RegistrationService::approveRequest($reqId, (int)Auth::id());
+        if ($res['success']) {
+            set_flash('success', $res['message']);
+        } else {
+            set_flash('danger', $res['message']);
+        }
+        header("Location: index.php?page=developer_registrations&request_id=" . $reqId);
+        exit;
+    }
+
+    // 2.3.1.2.2 Developer Reject Registration
+    if ($action === 'developer_reject_registration' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['developer', 'platform_admin']);
+        require_once __DIR__ . '/core/RegistrationService.php';
+
+        $reqId = (int)($_POST['request_id'] ?? 0);
+        $reason = clean_input($_POST['reason'] ?? '');
+        $res = RegistrationService::rejectRequest($reqId, $reason, (int)Auth::id());
+        if ($res['success']) {
+            set_flash('success', $res['message']);
+        } else {
+            set_flash('danger', $res['message']);
+        }
+        header("Location: index.php?page=developer_registrations&request_id=" . $reqId);
+        exit;
+    }
+
+    // 2.3.1.2.3 Developer Request More Information
+    if ($action === 'developer_request_more_info' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['developer', 'platform_admin']);
+        require_once __DIR__ . '/core/RegistrationService.php';
+
+        $reqId = (int)($_POST['request_id'] ?? 0);
+        $notes = clean_input($_POST['reason'] ?? '');
+        $res = RegistrationService::requestMoreInfo($reqId, $notes, (int)Auth::id());
+        if ($res['success']) {
+            set_flash('success', $res['message']);
+        } else {
+            set_flash('danger', $res['message']);
+        }
+        header("Location: index.php?page=developer_registrations&request_id=" . $reqId);
         exit;
     }
 
@@ -2769,6 +2858,20 @@ if ($page === 'forgot_password') {
     exit;
 }
 
+if ($page === 'register_hospital') {
+    if (Auth::check()) {
+        header("Location: index.php?page=dashboard");
+        exit;
+    }
+    require_once __DIR__ . '/views/auth/register_hospital.php';
+    exit;
+}
+
+if ($page === 'registration_status') {
+    require_once __DIR__ . '/views/auth/registration_status.php';
+    exit;
+}
+
 if ($page === 'print_credentials') {
     Auth::requireLogin();
     Auth::requireRole(['super_admin', 'hospital_admin']);
@@ -2905,6 +3008,11 @@ $routes = [
     'developer_dashboard' => [
         'file' => 'views/developer/dashboard.php',
         'title' => 'Platform Developer / Telemetry & Health',
+        'roles' => ['developer', 'platform_admin']
+    ],
+    'developer_registrations' => [
+        'file' => 'views/developer/registrations.php',
+        'title' => 'Hospital Registration Review',
         'roles' => ['developer', 'platform_admin']
     ],
     'developer_hospitals' => [

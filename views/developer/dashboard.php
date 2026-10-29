@@ -11,12 +11,14 @@
 Auth::requireRole(['developer', 'platform_admin']);
 
 require_once __DIR__ . '/../../core/Telemetry.php';
+require_once __DIR__ . '/../../core/RegistrationService.php';
 
 $summary = Telemetry::getPlatformSummary();
 $deptTelemetry = Telemetry::getDepartmentActivityTable();
 $techHealth = Telemetry::getSanitizedTechnicalHealth();
 $recentHospitals = Telemetry::getHospitalDirectory('', '', 'created_desc');
 $recentHospitals = array_slice($recentHospitals, 0, 5);
+$regCounts = RegistrationService::getCountsByStatus();
 ?>
 
 <div class="space-y-6">
@@ -34,6 +36,13 @@ $recentHospitals = array_slice($recentHospitals, 0, 5);
             <p class="text-sm text-slate-300 mt-1">Real-time aggregate platform adoption, technical availability, and hospital facility lifecycle.</p>
         </div>
         <div class="flex items-center gap-2.5 flex-wrap">
+            <a href="index.php?page=developer_registrations" class="px-4 py-2.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-teal-600/30 transition-all flex items-center gap-2">
+                <i class="fa-solid fa-file-signature"></i>
+                <span>Registrations</span>
+                <?php if ($regCounts['pending'] > 0): ?>
+                    <span class="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-400 text-slate-950 font-bold"><?= $regCounts['pending'] ?></span>
+                <?php endif; ?>
+            </a>
             <a href="index.php?page=developer_hospitals" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-2">
                 <i class="fa-solid fa-hospital-user"></i>
                 <span>Manage Hospitals</span>
@@ -44,6 +53,25 @@ $recentHospitals = array_slice($recentHospitals, 0, 5);
             </a>
         </div>
     </div>
+
+    <!-- Pending Registration Alert Banner -->
+    <?php if ($regCounts['pending'] > 0): ?>
+    <div class="p-4 rounded-2xl bg-gradient-to-r from-teal-950 via-slate-900 to-indigo-950 border border-teal-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-white shadow-xl">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-500/40 text-teal-400 flex items-center justify-center text-lg flex-shrink-0">
+                <i class="fa-solid fa-bell"></i>
+            </div>
+            <div>
+                <h4 class="text-sm font-bold text-white"><?= $regCounts['pending'] ?> Pending Hospital Registration Request<?= $regCounts['pending'] > 1 ? 's' : '' ?> Awaiting Developer Approval</h4>
+                <p class="text-xs text-slate-300">Public healthcare organizations have submitted onboarding requests requiring compliance review.</p>
+            </div>
+        </div>
+        <a href="index.php?page=developer_registrations&status=Pending+Approval" class="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold shadow-md transition-all whitespace-nowrap self-start sm:self-auto flex items-center gap-1.5">
+            <span>Review Applications</span>
+            <i class="fa-solid fa-arrow-right text-[10px]"></i>
+        </a>
+    </div>
+    <?php endif; ?>
 
     <!-- Platform Adoption KPI Cards -->
     <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">

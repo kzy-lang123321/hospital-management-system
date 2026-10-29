@@ -109,6 +109,25 @@ $hProfile = hospital_profile();
                     <i class="fa-solid fa-arrow-right-to-bracket text-xs"></i>
                 </button>
             </form>
+
+            <!-- Public Hospital Registration Portal Section -->
+            <div class="mt-6 pt-5 border-t border-white/10 text-center space-y-3">
+                <p class="text-xs text-slate-300">New healthcare facility or hospital owner?</p>
+                <a 
+                    href="index.php?page=register_hospital" 
+                    id="btnRegisterHospital"
+                    class="w-full py-2.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs rounded-xl shadow-lg shadow-emerald-700/20 transition-all flex items-center justify-center gap-2 border border-emerald-500/30"
+                >
+                    <i class="fa-solid fa-hospital"></i>
+                    <span>Register Your Hospital</span>
+                </a>
+                <div class="pt-1">
+                    <a href="index.php?page=registration_status" class="text-[11px] text-teal-400 hover:text-teal-300 transition-colors flex items-center justify-center gap-1.5">
+                        <i class="fa-solid fa-file-waveform text-[10px]"></i>
+                        <span>Check Registration Application Status</span>
+                    </a>
+                </div>
+            </div>
         </div>
 
         <div class="text-center mt-6 text-xs text-slate-500">
