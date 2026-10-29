@@ -89,26 +89,34 @@ class Auth {
         return $_SESSION['user']['role_slug'] ?? null;
     }
 
+    public static function isDeveloper(): bool {
+        return in_array(self::role(), ['developer', 'platform_admin'], true);
+    }
+
     public static function isPlatformAdmin(): bool {
-        return self::role() === 'platform_admin';
+        return self::isDeveloper();
     }
 
     public static function isHospitalOwner(): bool {
         $role = self::role();
-        return in_array($role, ['hospital_owner', 'super_admin', 'platform_admin'], true);
+        return in_array($role, ['hospital_owner', 'super_admin'], true);
     }
 
-    public static function hasRole(array $allowedRoles): bool {
+    public static function hasRole($allowedRoles): bool {
         if (!self::check()) return false;
+        if (is_string($allowedRoles)) {
+            $allowedRoles = [$allowedRoles];
+        }
         $currentRole = self::role();
         
-        // Platform admin has universal administrative access
-        if ($currentRole === 'platform_admin') return true;
+        // Developer / Platform Admin: strict least-privilege platform access (cannot access clinical/financial records)
+        if (in_array($currentRole, ['developer', 'platform_admin'], true)) {
+            return in_array('developer', $allowedRoles, true) || in_array('platform_admin', $allowedRoles, true);
+        }
         
-        // Hospital Super Admin or Owner has full hospital module access
+        // Hospital Super Admin or Owner has full hospital module access (cannot access platform developer console)
         if (in_array($currentRole, ['super_admin', 'hospital_owner'], true)) {
-            // Can access all hospital operational modules
-            if (!in_array('platform_admin', $allowedRoles, true)) {
+            if (!in_array('developer', $allowedRoles, true) && !in_array('platform_admin', $allowedRoles, true)) {
                 return true;
             }
         }
@@ -123,8 +131,11 @@ class Auth {
         }
     }
 
-    public static function requireRole(array $allowedRoles): void {
+    public static function requireRole($allowedRoles): void {
         self::requireLogin();
+        if (is_string($allowedRoles)) {
+            $allowedRoles = [$allowedRoles];
+        }
         if (!self::hasRole($allowedRoles)) {
             http_response_code(403);
             die("

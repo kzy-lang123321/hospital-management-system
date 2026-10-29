@@ -27,7 +27,13 @@ if ($action !== null) {
 
         if (Auth::attempt($username, $password)) {
             set_flash('success', 'Authenticated successfully. Welcome to ' . APP_NAME);
-            header("Location: index.php?page=dashboard");
+            if (Auth::isDeveloper()) {
+                header("Location: index.php?page=developer_dashboard");
+            } elseif (Auth::isPlatformAdmin() && empty($_SESSION['platform_active_hospital_id'])) {
+                header("Location: index.php?page=platform_dashboard");
+            } else {
+                header("Location: index.php?page=dashboard");
+            }
             exit;
         } else {
             set_flash('danger', 'Invalid username or password. Please check your credentials.');
@@ -41,6 +47,23 @@ if ($action !== null) {
         Auth::logout();
         set_flash('info', 'You have been securely signed out.');
         header("Location: index.php?page=login");
+        exit;
+    }
+
+    // 2.0.1 Password Recovery Request (Public - No Login Required)
+    if ($action === 'forgot_password_request' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        $identity = clean_input($_POST['identity'] ?? '');
+        if (!empty($identity)) {
+            $stmt = $db->prepare("SELECT id, email, username, full_name FROM `users` WHERE email = ? OR username = ? LIMIT 1");
+            $stmt->execute([$identity, $identity]);
+            $u = $stmt->fetch();
+            if ($u) {
+                AuditLogger::log('PASSWORD_RESET_REQUEST', 'users', $u['id'], null, ['identity' => $identity]);
+            }
+        }
+        set_flash('success', 'If an account matches your details, password recovery instructions or an administrator review ticket has been dispatched.');
+        header("Location: index.php?page=forgot_password");
         exit;
     }
 
@@ -81,7 +104,7 @@ if ($action !== null) {
     // 2.3 Create New Hospital & Owner Account (Platform Super Admin Only)
     if ($action === 'create_hospital' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['platform_admin']);
+        Auth::requireRole(['platform_admin', 'developer']);
 
         $hospitalName = clean_input($_POST['hospital_name'] ?? '');
         $hospitalCode = clean_input($_POST['hospital_code'] ?? '');
@@ -89,10 +112,11 @@ if ($action !== null) {
         $ownerEmail = clean_input($_POST['owner_email'] ?? '');
         $ownerPassword = $_POST['owner_password'] ?? '';
         $ownerName = clean_input($_POST['owner_name'] ?? '');
+        $backPage = Auth::isDeveloper() ? 'developer_hospitals' : 'platform_hospitals';
 
         if (empty($hospitalName) || empty($ownerUsername) || empty($ownerEmail) || empty($ownerPassword)) {
             set_flash('danger', 'Please provide all mandatory hospital and owner credentials.');
-            header("Location: index.php?page=platform_hospitals");
+            header("Location: index.php?page=" . $backPage);
             exit;
         }
 
@@ -101,7 +125,7 @@ if ($action !== null) {
         $chk->execute([$ownerUsername, $ownerEmail]);
         if ($chk->fetch()) {
             set_flash('danger', 'A staff or owner account with this username or email already exists.');
-            header("Location: index.php?page=platform_hospitals");
+            header("Location: index.php?page=" . $backPage);
             exit;
         }
 
@@ -136,24 +160,26 @@ if ($action !== null) {
             ]);
 
             set_flash('success', "Hospital '$hospitalName' deployed successfully with owner account '$ownerUsername'.");
-            header("Location: index.php?page=platform_hospitals");
+            header("Location: index.php?page=" . $backPage);
             exit;
         } catch (Exception $e) {
             set_flash('danger', 'Failed to register hospital facility: ' . $e->getMessage());
-            header("Location: index.php?page=platform_hospitals");
+            header("Location: index.php?page=" . $backPage);
             exit;
         }
     }
 
-    // 2.3.1 Toggle Hospital Active/Suspended Status (Platform Super Admin Only)
+    // 2.3.1 Toggle Hospital Active/Suspended Status (Platform Super Admin & Developer)
     if ($action === 'toggle_hospital_status' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['platform_admin']);
+        Auth::requireRole(['platform_admin', 'developer']);
 
         $targetId = (int)($_POST['hospital_id'] ?? 0);
+        $backPage = Auth::isDeveloper() ? 'developer_hospitals' : 'platform_hospitals';
+
         if ($targetId === 1) {
             set_flash('warning', 'The primary default hospital cannot be suspended.');
-            header("Location: index.php?page=platform_hospitals");
+            header("Location: index.php?page=" . $backPage);
             exit;
         }
 
@@ -169,7 +195,214 @@ if ($action !== null) {
             AuditLogger::log('UPDATE', 'hospital_profiles', $targetId, ['status' => $row['status']], ['status' => $newStatus]);
             set_flash('success', "Hospital '{$row['hospital_name']}' status changed to $newStatus.");
         }
-        header("Location: index.php?page=platform_hospitals");
+        header("Location: index.php?page=" . $backPage);
+        exit;
+    }
+
+    // 2.3.1.2 Developer Hospital Status Management with Audit Reason
+    if ($action === 'developer_hospital_status' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['developer', 'platform_admin']);
+
+        $targetId = (int)($_POST['hospital_id'] ?? 0);
+        $newStatus = clean_input($_POST['status'] ?? 'Active');
+        $reason = clean_input($_POST['reason'] ?? '');
+
+        if (!in_array($newStatus, ['Active', 'Suspended', 'Inactive'], true)) {
+            $newStatus = 'Active';
+        }
+
+        if ($targetId === 1 && $newStatus !== 'Active') {
+            set_flash('warning', 'Default Primary Hospital cannot be suspended.');
+            header("Location: index.php?page=developer_hospitals");
+            exit;
+        }
+
+        $stmt = $db->prepare("SELECT status, hospital_name FROM `hospital_profiles` WHERE id = ?");
+        $stmt->execute([$targetId]);
+        $row = $stmt->fetch();
+
+        if ($row) {
+            $upd = $db->prepare("UPDATE `hospital_profiles` SET status = ?, updated_at = NOW() WHERE id = ?");
+            $upd->execute([$newStatus, $targetId]);
+
+            AuditLogger::log('STATUS_CHANGE', 'hospital_profiles', $targetId, ['status' => $row['status']], ['status' => $newStatus, 'reason' => $reason]);
+            set_flash('success', "Hospital '{$row['hospital_name']}' status updated to $newStatus.");
+        }
+        header("Location: index.php?page=developer_hospitals");
+        exit;
+    }
+
+    // 2.3.1.3 Developer Profile Update
+    if ($action === 'developer_update_profile' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['developer', 'platform_admin']);
+
+        $userId = (int)Auth::id();
+        $fullName = clean_input($_POST['full_name'] ?? '');
+        $username = clean_input($_POST['username'] ?? '');
+        $email = clean_input($_POST['email'] ?? '');
+
+        if (empty($fullName) || empty($username) || empty($email)) {
+            set_flash('danger', 'Please provide full name, username, and valid email.');
+            header("Location: index.php?page=developer_profile");
+            exit;
+        }
+
+        // Check for duplicates
+        $chk = $db->prepare("SELECT id FROM `users` WHERE (username = ? OR email = ?) AND id != ? LIMIT 1");
+        $chk->execute([$username, $email, $userId]);
+        if ($chk->fetch()) {
+            set_flash('danger', 'A user account with that username or email already exists.');
+            header("Location: index.php?page=developer_profile");
+            exit;
+        }
+
+        $upd = $db->prepare("UPDATE `users` SET full_name = ?, username = ?, email = ? WHERE id = ?");
+        $upd->execute([$fullName, $username, $email, $userId]);
+        $_SESSION['user']['full_name'] = $fullName;
+        $_SESSION['user']['username'] = $username;
+        $_SESSION['user']['email'] = $email;
+
+        AuditLogger::log('PROFILE_UPDATE', 'users', $userId, null, ['username' => $username, 'email' => $email]);
+        set_flash('success', 'Developer credentials and contact email updated successfully.');
+        header("Location: index.php?page=developer_profile");
+        exit;
+    }
+
+    // 2.3.1.4 Developer Password Change
+    if ($action === 'developer_change_password' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['developer', 'platform_admin']);
+
+        $userId = (int)Auth::id();
+        $currPass = $_POST['current_password'] ?? '';
+        $newPass = $_POST['new_password'] ?? '';
+        $confPass = $_POST['confirm_password'] ?? '';
+
+        if (strlen($newPass) < 8) {
+            set_flash('danger', 'New password must be at least 8 characters in length.');
+            header("Location: index.php?page=developer_profile");
+            exit;
+        }
+
+        if ($newPass !== $confPass) {
+            set_flash('danger', 'New password and confirmation do not match.');
+            header("Location: index.php?page=developer_profile");
+            exit;
+        }
+
+        $stmt = $db->prepare("SELECT password_hash FROM `users` WHERE id = ?");
+        $stmt->execute([$userId]);
+        $currentHash = $stmt->fetchColumn();
+
+        if (!password_verify($currPass, $currentHash)) {
+            set_flash('danger', 'Current master password is incorrect. Verification failed.');
+            header("Location: index.php?page=developer_profile");
+            exit;
+        }
+
+        $newHash = password_hash($newPass, PASSWORD_BCRYPT);
+        $upd = $db->prepare("UPDATE `users` SET password_hash = ? WHERE id = ?");
+        $upd->execute([$newHash, $userId]);
+
+        AuditLogger::log('PASSWORD_CHANGE', 'users', $userId, null, ['action' => 'developer_master_pwd_changed']);
+        set_flash('success', 'Master developer password changed successfully.');
+        header("Location: index.php?page=developer_profile");
+        exit;
+    }
+
+    // 2.3.1.5 Location-Verified Staff Attendance Actions
+    if ($action === 'attendance_checkin' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        require_once __DIR__ . '/core/AttendanceService.php';
+
+        $lat = !empty($_POST['latitude']) ? (float)$_POST['latitude'] : null;
+        $lon = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
+        $acc = !empty($_POST['accuracy']) ? (float)$_POST['accuracy'] : null;
+        $notes = clean_input($_POST['notes'] ?? '');
+
+        $res = AttendanceService::processCheckIn((int)Auth::id(), $lat, $lon, $acc, $notes);
+        if ($res['success']) {
+            set_flash('success', $res['message']);
+        } else {
+            set_flash('danger', $res['message']);
+        }
+        header("Location: index.php?page=attendance");
+        exit;
+    }
+
+    if ($action === 'attendance_checkout' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        require_once __DIR__ . '/core/AttendanceService.php';
+
+        $lat = !empty($_POST['latitude']) ? (float)$_POST['latitude'] : null;
+        $lon = !empty($_POST['longitude']) ? (float)$_POST['longitude'] : null;
+        $acc = !empty($_POST['accuracy']) ? (float)$_POST['accuracy'] : null;
+
+        $res = AttendanceService::processCheckOut((int)Auth::id(), $lat, $lon, $acc);
+        if ($res['success']) {
+            set_flash('success', $res['message']);
+        } else {
+            set_flash('danger', $res['message']);
+        }
+        header("Location: index.php?page=attendance");
+        exit;
+    }
+
+    if ($action === 'attendance_exception_submit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        require_once __DIR__ . '/core/AttendanceService.php';
+
+        $attId = !empty($_POST['attendance_id']) ? (int)$_POST['attendance_id'] : null;
+        $reqType = clean_input($_POST['request_type'] ?? 'Out_Of_Bounds');
+        $reason = clean_input($_POST['reason'] ?? '');
+
+        $res = AttendanceService::submitException((int)Auth::id(), $attId, $reqType, $reason);
+        if ($res['success']) {
+            set_flash('success', $res['message']);
+        } else {
+            set_flash('danger', $res['message']);
+        }
+        header("Location: index.php?page=attendance");
+        exit;
+    }
+
+    if ($action === 'attendance_exception_review' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'superadmin', 'hospital_admin', 'admin', 'hr', 'hospital_owner', 'medical_director', 'platform_admin']);
+        require_once __DIR__ . '/core/AttendanceService.php';
+
+        $excId = (int)($_POST['exception_id'] ?? 0);
+        $status = clean_input($_POST['status'] ?? '');
+        $reviewNotes = clean_input($_POST['review_notes'] ?? '');
+
+        $res = AttendanceService::reviewException($excId, $status, $reviewNotes, (int)Auth::id());
+        if ($res['success']) {
+            set_flash('success', $res['message']);
+        } else {
+            set_flash('danger', $res['message']);
+        }
+        header("Location: index.php?page=attendance");
+        exit;
+    }
+
+    if ($action === 'attendance_settings_save' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'superadmin', 'hospital_admin', 'admin', 'hospital_owner', 'platform_admin']);
+
+        $hId = (int)Tenant::id();
+        $lat = (float)($_POST['hospital_latitude'] ?? 34.01513700);
+        $lon = (float)($_POST['hospital_longitude'] ?? 71.52491500);
+        $radius = (int)($_POST['geofence_radius_meters'] ?? 300);
+        $grace = (int)($_POST['attendance_grace_minutes'] ?? 15);
+
+        $upd = $db->prepare("UPDATE `hospital_profiles` SET hospital_latitude = ?, hospital_longitude = ?, geofence_radius_meters = ?, attendance_grace_minutes = ?, updated_at = NOW() WHERE id = ?");
+        $upd->execute([$lat, $lon, $radius, $grace, $hId]);
+
+        AuditLogger::log('GEOFENCE_UPDATE', 'hospital_profiles', $hId, null, ['lat' => $lat, 'lon' => $lon, 'radius' => $radius]);
+        set_flash('success', 'Hospital geofence perimeter and attendance policy saved.');
+        header("Location: index.php?page=attendance");
         exit;
     }
 
@@ -2516,10 +2749,23 @@ if ($action !== null) {
 
 if ($page === 'login') {
     if (Auth::check()) {
-        header("Location: index.php?page=dashboard");
+        if (Auth::isDeveloper()) {
+            header("Location: index.php?page=developer_dashboard");
+        } else {
+            header("Location: index.php?page=dashboard");
+        }
         exit;
     }
     require_once __DIR__ . '/views/auth/login.php';
+    exit;
+}
+
+if ($page === 'forgot_password') {
+    if (Auth::check()) {
+        header("Location: index.php?page=dashboard");
+        exit;
+    }
+    require_once __DIR__ . '/views/auth/forgot_password.php';
     exit;
 }
 
@@ -2656,7 +2902,32 @@ $routes = [
         'title' => 'Forensic Security & Audit Trail',
         'roles' => ['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']
     ],
+    'developer_dashboard' => [
+        'file' => 'views/developer/dashboard.php',
+        'title' => 'Platform Developer / Telemetry & Health',
+        'roles' => ['developer', 'platform_admin']
+    ],
+    'developer_hospitals' => [
+        'file' => 'views/developer/hospitals.php',
+        'title' => 'Multi-Hospital Platform Directory',
+        'roles' => ['developer', 'platform_admin']
+    ],
+    'developer_profile' => [
+        'file' => 'views/developer/profile.php',
+        'title' => 'Developer Security & Master Account',
+        'roles' => ['developer', 'platform_admin']
+    ],
+    'attendance' => [
+        'file' => 'views/attendance/index.php',
+        'title' => 'Staff Attendance & Geofenced Time Clock',
+        'roles' => ['developer', 'platform_admin', 'super_admin', 'superadmin', 'hospital_admin', 'admin', 'hospital_owner', 'doctor', 'nurse', 'pharmacist', 'lab_technician', 'radiologist', 'cashier', 'receptionist', 'hr', 'medical_director']
+    ],
 ];
+
+// If platform developer, default to developer_dashboard
+if (Auth::isDeveloper() && (!isset($_GET['page']) || $_GET['page'] === 'dashboard')) {
+    $page = 'developer_dashboard';
+}
 
 // If platform admin and no hospital context active, default to platform dashboard
 if (Auth::isPlatformAdmin() && empty($_SESSION['platform_active_hospital_id']) && (!isset($_GET['page']) || $_GET['page'] === 'dashboard')) {
@@ -2664,7 +2935,13 @@ if (Auth::isPlatformAdmin() && empty($_SESSION['platform_active_hospital_id']) &
 }
 
 if (!isset($routes[$page])) {
-    $page = Auth::isPlatformAdmin() && empty($_SESSION['platform_active_hospital_id']) ? 'platform_dashboard' : 'dashboard';
+    if (Auth::isDeveloper()) {
+        $page = 'developer_dashboard';
+    } elseif (Auth::isPlatformAdmin() && empty($_SESSION['platform_active_hospital_id'])) {
+        $page = 'platform_dashboard';
+    } else {
+        $page = 'dashboard';
+    }
 }
 
 $targetRoute = $routes[$page];

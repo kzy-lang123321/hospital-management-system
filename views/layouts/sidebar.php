@@ -37,6 +37,37 @@ function nav_active(string $pageName, string $currentPage): string {
     <!-- Navigation Links -->
     <div class="flex-1 overflow-y-auto custom-scrollbar py-4 px-3 space-y-6">
 
+        <?php if (Auth::isDeveloper()): ?>
+        <!-- Platform Developer / Provider Console (STRICT PRIVACY - INFRASTRUCTURE ONLY) -->
+        <div class="p-3 rounded-2xl bg-gradient-to-b from-indigo-950/80 to-slate-900 border border-indigo-800/60 space-y-2 shadow-lg">
+            <div class="text-[10px] font-bold text-indigo-300 uppercase tracking-wider px-2 flex items-center gap-1.5 mb-1">
+                <i class="fa-solid fa-code"></i> Developer Console
+            </div>
+            <a href="index.php?page=developer_dashboard" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all <?= nav_active('developer_dashboard', $currentPage) ?>">
+                <i class="fa-solid fa-chart-pie w-4 text-center text-indigo-400"></i>
+                <span>Platform Telemetry</span>
+            </a>
+            <a href="index.php?page=developer_hospitals" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all <?= nav_active('developer_hospitals', $currentPage) ?>">
+                <i class="fa-solid fa-hospital-user w-4 text-center text-indigo-400"></i>
+                <span>Hospital Facilities</span>
+            </a>
+            <a href="index.php?page=developer_profile" class="flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all <?= nav_active('developer_profile', $currentPage) ?>">
+                <i class="fa-solid fa-key w-4 text-center text-amber-400"></i>
+                <span>Developer Security</span>
+            </a>
+        </div>
+        <div class="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400 space-y-1">
+            <div class="font-bold text-emerald-400 flex items-center gap-1.5">
+                <i class="fa-solid fa-shield-halved"></i>
+                <span>Privacy Boundary Active</span>
+            </div>
+            <p class="text-[10px] text-slate-400 leading-normal">
+                Clinical records, patient charts, and financial data are strictly shielded from platform developer view.
+            </p>
+        </div>
+
+        <?php else: ?>
+
         <!-- Platform Super Admin Console (When authorized) -->
         <?php if (Auth::isPlatformAdmin()): ?>
         <div class="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-800/60 space-y-1">
@@ -61,6 +92,11 @@ function nav_active(string $pageName, string $currentPage): string {
                 <a href="index.php?page=dashboard" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('dashboard', $currentPage) ?>">
                     <i class="fa-solid fa-chart-pie w-5 text-center"></i>
                     <span>Dashboard</span>
+                </a>
+
+                <a href="index.php?page=attendance" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('attendance', $currentPage) ?>">
+                    <i class="fa-solid fa-user-clock w-5 text-center text-teal-400"></i>
+                    <span>Staff Attendance</span>
                 </a>
 
                 <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'receptionist', 'doctor', 'nurse', 'cashier'])): ?>
@@ -198,6 +234,7 @@ function nav_active(string $pageName, string $currentPage): string {
                 </a>
             </nav>
         </div>
+        <?php endif; ?>
         <?php endif; ?>
 
     </div>

@@ -49,7 +49,7 @@ $hProfile = hospital_profile();
                 <?= csrf_field() ?>
 
                 <div>
-                    <label class="block text-xs font-medium text-slate-300 mb-1.5">Username or Hospital Email</label>
+                    <label class="block text-xs font-medium text-slate-300 mb-1.5">Username or Registered Email</label>
                     <div class="relative">
                         <i class="fa-solid fa-user-shield absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
                         <input 
@@ -57,15 +57,18 @@ $hProfile = hospital_profile();
                             name="username" 
                             id="loginUsername" 
                             required 
-                            placeholder="e.g. superadmin, dr.tariq"
-                            value="superadmin"
+                            autocomplete="username"
+                            placeholder="Enter username or email"
                             class="w-full pl-9 pr-4 py-2.5 bg-slate-900/60 border border-slate-700 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-lg text-sm text-white placeholder-slate-500 outline-none transition-all"
                         >
                     </div>
                 </div>
 
                 <div>
-                    <label class="block text-xs font-medium text-slate-300 mb-1.5">Secret Password</label>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <label class="block text-xs font-medium text-slate-300">Password</label>
+                        <a href="index.php?page=forgot_password" class="text-[11px] text-teal-400 hover:text-teal-300 transition-colors">Forgot password?</a>
+                    </div>
                     <div class="relative">
                         <i class="fa-solid fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
                         <input 
@@ -73,8 +76,8 @@ $hProfile = hospital_profile();
                             name="password" 
                             id="loginPassword" 
                             required 
+                            autocomplete="current-password"
                             placeholder="••••••••"
-                            value="Arshad!3453"
                             class="w-full pl-9 pr-10 py-2.5 bg-slate-900/60 border border-slate-700 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-lg text-sm text-white placeholder-slate-500 outline-none transition-all"
                         >
                         <button 
@@ -106,43 +109,6 @@ $hProfile = hospital_profile();
                     <i class="fa-solid fa-arrow-right-to-bracket text-xs"></i>
                 </button>
             </form>
-
-            <!-- Quick Demo Role Switcher Pills -->
-            <div class="mt-6 pt-5 border-t border-slate-800">
-                <div class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2.5 flex items-center justify-between">
-                    <span>Quick Management Switcher</span>
-                    <span class="text-[10px] text-teal-400 font-mono">1-Click Auto-Fill</span>
-                </div>
-                <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-[11px]">
-                    <button type="button" onclick="setCredentials('superadmin', 'Arshad!3453')" class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-left truncate transition-colors" title="CEO / Executive Director">
-                        <i class="fa-solid fa-crown text-amber-400 mr-1"></i> Admin
-                    </button>
-                    <button type="button" onclick="setCredentials('dr.tariq', 'Tariq%6991')" class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-left truncate transition-colors" title="Chief of OPD">
-                        <i class="fa-solid fa-user-doctor text-sky-400 mr-1"></i> OPD Doctor
-                    </button>
-                    <button type="button" onclick="setCredentials('dr.imran', 'Imran@7929')" class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-left truncate transition-colors" title="Director of Surgery / OT">
-                        <i class="fa-solid fa-hand-holding-medical text-indigo-400 mr-1"></i> OT Surgeon
-                    </button>
-                    <button type="button" onclick="setCredentials('nurse.fatima', 'Fatima@3117')" class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-left truncate transition-colors" title="Nursing Superintendent / Wards">
-                        <i class="fa-solid fa-user-nurse text-rose-400 mr-1"></i> Nurse (IPD)
-                    </button>
-                    <button type="button" onclick="setCredentials('pharm.kamran', 'Kamran@4277')" class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-left truncate transition-colors" title="Chief Pharmacist">
-                        <i class="fa-solid fa-pills text-emerald-400 mr-1"></i> Pharmacy
-                    </button>
-                    <button type="button" onclick="setCredentials('lab.usman', 'Usman#2457')" class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-left truncate transition-colors" title="Head of Pathology">
-                        <i class="fa-solid fa-flask text-purple-400 mr-1"></i> Laboratory
-                    </button>
-                    <button type="button" onclick="setCredentials('radio.farooq', 'Farooq#5473')" class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-left truncate transition-colors" title="Head of Radiology & PACS">
-                        <i class="fa-solid fa-x-ray text-blue-400 mr-1"></i> Radiology
-                    </button>
-                    <button type="button" onclick="setCredentials('cashier.hassan', 'Hassan%9562')" class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-left truncate transition-colors" title="Finance & Billing Head">
-                        <i class="fa-solid fa-cash-register text-teal-400 mr-1"></i> Cashier
-                    </button>
-                    <button type="button" onclick="setCredentials('reception.sana', 'Sana#7271')" class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-left truncate transition-colors" title="Front Desk Reception Head">
-                        <i class="fa-solid fa-id-card-clip text-pink-400 mr-1"></i> Reception
-                    </button>
-                </div>
-            </div>
         </div>
 
         <div class="text-center mt-6 text-xs text-slate-500">
@@ -164,11 +130,6 @@ $hProfile = hospital_profile();
                 icon.classList.remove('fa-eye-slash');
                 icon.classList.add('fa-eye');
             }
-        }
-
-        function setCredentials(username, password) {
-            document.getElementById('loginUsername').value = username;
-            document.getElementById('loginPassword').value = password;
         }
     </script>
 </body>

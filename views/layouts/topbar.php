@@ -16,7 +16,8 @@ $hProfile = hospital_profile();
         </div>
     </div>
 
-    <!-- Center: Universal Patient Search (Omni-Box) -->
+    <!-- Center: Universal Patient Search (Omni-Box) - Hidden for Developers (Strict Privacy) -->
+    <?php if (!Auth::isDeveloper()): ?>
     <div class="hidden md:flex items-center flex-1 max-w-md mx-4">
         <form action="index.php" method="GET" class="w-full relative">
             <input type="hidden" name="page" value="patients">
@@ -36,14 +37,24 @@ $hProfile = hospital_profile();
             </div>
         </form>
     </div>
+    <?php else: ?>
+    <div class="hidden md:flex items-center flex-1 max-w-md mx-4">
+        <div class="flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+            <i class="fa-solid fa-shield-halved text-emerald-500"></i>
+            <span class="font-medium">Developer Mode: Privacy Shield Enabled (PHI Blocked)</span>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <!-- Right: Quick Status & Emergency Access -->
     <div class="flex items-center gap-2 sm:gap-4 flex-shrink-0">
+        <?php if (!Auth::isDeveloper()): ?>
         <!-- Emergency Hotline Indicator from Database -->
         <div class="hidden xl:flex items-center gap-2 px-2.5 py-1 bg-rose-50 border border-rose-200 rounded-md text-xs text-rose-700">
             <span class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
             <span class="font-semibold">ER Hotline:</span> <?= htmlspecialchars($hProfile['emergency_hotline'] ?? '1122') ?>
         </div>
+        <?php endif; ?>
 
         <!-- Role Badge & Hospital Context Switcher -->
         <div class="flex items-center gap-2 sm:border-l sm:border-slate-200 sm:pl-4">

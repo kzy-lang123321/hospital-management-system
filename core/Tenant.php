@@ -117,10 +117,14 @@ class Tenant {
     }
 
     /**
-     * Check if current user is Platform Super Admin
+     * Check if current user is Platform Developer / Company Provider
      */
+    public static function isDeveloper(): bool {
+        return isset($_SESSION['user']['role_slug']) && in_array($_SESSION['user']['role_slug'], ['developer', 'platform_admin'], true);
+    }
+
     public static function isPlatformAdmin(): bool {
-        return isset($_SESSION['user']['role_slug']) && $_SESSION['user']['role_slug'] === 'platform_admin';
+        return self::isDeveloper();
     }
 
     /**
@@ -128,15 +132,16 @@ class Tenant {
      */
     public static function isHospitalOwner(): bool {
         $role = $_SESSION['user']['role_slug'] ?? '';
-        return in_array($role, ['hospital_owner', 'super_admin', 'platform_admin'], true);
+        return in_array($role, ['hospital_owner', 'super_admin'], true);
     }
 
     /**
      * Check if active session is authorized to access a record belonging to a given hospital ID
      */
     public static function isAuthorizedFor(int $recordHospitalId): bool {
-        if (self::isPlatformAdmin()) {
-            return true; // Platform admin has universal cross-tenant oversight
+        // Platform Developer is restricted from accessing clinical/operational records
+        if (self::isDeveloper()) {
+            return false;
         }
         return self::id() === $recordHospitalId;
     }
