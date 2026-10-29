@@ -9,17 +9,22 @@ $filterDate = clean_input($_GET['date'] ?? date('Y-m-d'));
 $filterDoctor = (int)($_GET['doctor_id'] ?? 0);
 $prefillPatientId = (int)($_GET['patient_id'] ?? 0);
 
-// Fetch doctors list
-$doctors = $db->query("
+// Fetch doctors list for current hospital
+$hId = Tenant::id();
+$docStmt = $db->prepare("
     SELECT u.id, u.full_name, u.consultation_fee, d.department_name 
     FROM `users` u
     JOIN `roles` r ON u.role_id = r.id
     LEFT JOIN `departments` d ON u.department_id = d.id
-    WHERE r.slug = 'doctor' AND u.status = 'Active'
-")->fetchAll();
+    WHERE r.slug = 'doctor' AND u.status = 'Active' AND u.hospital_id = ?
+");
+$docStmt->execute([$hId]);
+$doctors = $docStmt->fetchAll();
 
 // Fetch patients for dropdown
-$patients = $db->query("SELECT id, mrn, first_name, last_name, phone_primary FROM `patients` WHERE `status` = 'Active' ORDER BY id DESC LIMIT 50")->fetchAll();
+$patStmt = $db->prepare("SELECT id, mrn, first_name, last_name, phone_primary FROM `patients` WHERE `status` = 'Active' AND hospital_id = ? ORDER BY id DESC LIMIT 50");
+$patStmt->execute([$hId]);
+$patients = $patStmt->fetchAll();
 
 // Fetch appointments
 $query = "
@@ -29,9 +34,9 @@ $query = "
     JOIN `patients` p ON a.patient_id = p.id
     JOIN `users` u ON a.doctor_id = u.id
     JOIN `departments` d ON a.department_id = d.id
-    WHERE a.appointment_date = ?
+    WHERE a.appointment_date = ? AND a.hospital_id = ?
 ";
-$params = [$filterDate];
+$params = [$filterDate, $hId];
 
 if ($filterDoctor > 0) {
     $query .= " AND a.doctor_id = ?";

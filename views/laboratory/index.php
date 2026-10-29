@@ -8,7 +8,8 @@ $db = Database::getConnection();
 $selectedItemId = (int)($_GET['item_id'] ?? 0);
 $searchQuery = clean_input($_GET['search'] ?? '');
 
-// Fetch Lab Orders & Test Items with optional search
+// Fetch Lab Orders & Test Items with optional search for current hospital
+$hId = Tenant::id();
 $orderSql = "
     SELECT loi.*, lo.order_number, lo.order_datetime, lo.priority,
            lt.test_name, lt.test_code, lt.specimen_type, lt.standard_price,
@@ -20,12 +21,13 @@ $orderSql = "
     JOIN `encounters` e ON lo.encounter_id = e.id
     JOIN `patients` p ON e.patient_id = p.id
     JOIN `users` u ON lo.ordered_by = u.id
+    WHERE lo.hospital_id = ?
 ";
-$orderParams = [];
+$orderParams = [$hId];
 if (!empty($searchQuery)) {
-    $orderSql .= " WHERE lo.order_number LIKE ? OR p.mrn LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR loi.sample_barcode LIKE ?";
+    $orderSql .= " AND (lo.order_number LIKE ? OR p.mrn LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR loi.sample_barcode LIKE ?)";
     $searchTerm = "%$searchQuery%";
-    $orderParams = [$searchTerm, $searchTerm, $searchTerm, $searchTerm, $searchTerm];
+    $orderParams = array_merge($orderParams, [$searchTerm, $searchTerm, $searchTerm, $searchTerm, $searchTerm]);
 }
 $orderSql .= " ORDER BY loi.id DESC";
 $stmt = $db->prepare($orderSql);

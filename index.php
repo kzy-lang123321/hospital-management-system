@@ -47,6 +47,219 @@ if ($action !== null) {
     // ALL SUBSEQUENT ACTIONS REQUIRE AUTHENTICATION
     Auth::requireLogin();
 
+    // ========================================================================
+    // MULTI-TENANT & PLATFORM SUPER ADMIN ACTIONS
+    // ========================================================================
+
+    // 2.1 Switch Hospital Workspace (Platform Super Admin Only)
+    if ($action === 'switch_hospital' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['platform_admin']);
+        $hospId = (int)($_POST['hospital_id'] ?? 0);
+        if ($hospId > 0 && Tenant::switchContext($hospId)) {
+            $p = Tenant::profile($hospId);
+            set_flash('info', 'Workspace context switched to: ' . $p['hospital_name']);
+            header("Location: index.php?page=dashboard");
+            exit;
+        } else {
+            set_flash('danger', 'Failed to switch context to specified hospital.');
+            header("Location: index.php?page=platform_hospitals");
+            exit;
+        }
+    }
+
+    // 2.2 Clear Platform Context (Return to Platform Overview)
+    if ($action === 'clear_platform_context' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['platform_admin']);
+        Tenant::clearPlatformContext();
+        set_flash('info', 'Returned to Platform Super Admin control scope.');
+        header("Location: index.php?page=platform_dashboard");
+        exit;
+    }
+
+    // 2.3 Create New Hospital & Owner Account (Platform Super Admin Only)
+    if ($action === 'create_hospital' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['platform_admin']);
+
+        $hospitalName = clean_input($_POST['hospital_name'] ?? '');
+        $hospitalCode = clean_input($_POST['hospital_code'] ?? '');
+        $ownerUsername = clean_input($_POST['owner_username'] ?? '');
+        $ownerEmail = clean_input($_POST['owner_email'] ?? '');
+        $ownerPassword = $_POST['owner_password'] ?? '';
+        $ownerName = clean_input($_POST['owner_name'] ?? '');
+
+        if (empty($hospitalName) || empty($ownerUsername) || empty($ownerEmail) || empty($ownerPassword)) {
+            set_flash('danger', 'Please provide all mandatory hospital and owner credentials.');
+            header("Location: index.php?page=platform_hospitals");
+            exit;
+        }
+
+        // Validate uniqueness of username and email
+        $chk = $db->prepare("SELECT id FROM `users` WHERE username = ? OR email = ? LIMIT 1");
+        $chk->execute([$ownerUsername, $ownerEmail]);
+        if ($chk->fetch()) {
+            set_flash('danger', 'A staff or owner account with this username or email already exists.');
+            header("Location: index.php?page=platform_hospitals");
+            exit;
+        }
+
+        try {
+            $hData = [
+                'hospital_name' => $hospitalName,
+                'hospital_code' => $hospitalCode,
+                'tagline' => clean_input($_POST['tagline'] ?? ''),
+                'city' => clean_input($_POST['city'] ?? 'City'),
+                'address' => clean_input($_POST['address'] ?? ''),
+                'emergency_hotline' => clean_input($_POST['emergency_hotline'] ?? '1122'),
+                'mrn_prefix' => clean_input($_POST['mrn_prefix'] ?? 'HOSP'),
+                'invoice_prefix' => clean_input($_POST['invoice_prefix'] ?? 'INV'),
+                'currency_symbol' => clean_input($_POST['currency_symbol'] ?? 'PKR '),
+                'theme_color' => clean_input($_POST['theme_color'] ?? '#0284c7'),
+                'subscription_plan' => clean_input($_POST['subscription_plan'] ?? 'Enterprise'),
+            ];
+
+            $oData = [
+                'username' => $ownerUsername,
+                'email' => $ownerEmail,
+                'password' => $ownerPassword,
+                'full_name' => $ownerName,
+                'phone' => clean_input($_POST['owner_phone'] ?? ''),
+                'designation' => 'Hospital Owner & Super Administrator'
+            ];
+
+            $newHospId = Tenant::registerHospital($hData, $oData);
+            AuditLogger::log('CREATE', 'hospital_profiles', $newHospId, null, [
+                'hospital_name' => $hospitalName,
+                'owner' => $ownerUsername
+            ]);
+
+            set_flash('success', "Hospital '$hospitalName' deployed successfully with owner account '$ownerUsername'.");
+            header("Location: index.php?page=platform_hospitals");
+            exit;
+        } catch (Exception $e) {
+            set_flash('danger', 'Failed to register hospital facility: ' . $e->getMessage());
+            header("Location: index.php?page=platform_hospitals");
+            exit;
+        }
+    }
+
+    // 2.3.1 Toggle Hospital Active/Suspended Status (Platform Super Admin Only)
+    if ($action === 'toggle_hospital_status' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['platform_admin']);
+
+        $targetId = (int)($_POST['hospital_id'] ?? 0);
+        if ($targetId === 1) {
+            set_flash('warning', 'The primary default hospital cannot be suspended.');
+            header("Location: index.php?page=platform_hospitals");
+            exit;
+        }
+
+        $stmt = $db->prepare("SELECT status, hospital_name FROM `hospital_profiles` WHERE id = ?");
+        $stmt->execute([$targetId]);
+        $row = $stmt->fetch();
+
+        if ($row) {
+            $newStatus = ($row['status'] === 'Active') ? 'Suspended' : 'Active';
+            $upd = $db->prepare("UPDATE `hospital_profiles` SET status = ?, updated_at = NOW() WHERE id = ?");
+            $upd->execute([$newStatus, $targetId]);
+
+            AuditLogger::log('UPDATE', 'hospital_profiles', $targetId, ['status' => $row['status']], ['status' => $newStatus]);
+            set_flash('success', "Hospital '{$row['hospital_name']}' status changed to $newStatus.");
+        }
+        header("Location: index.php?page=platform_hospitals");
+        exit;
+    }
+
+    // 2.3.2 Save Hospital Customization & Settings (Hospital Owner & Admins)
+    if ($action === 'save_hospital_customization' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['hospital_owner', 'super_admin', 'platform_admin']);
+
+        $targetId = (int)($_POST['hospital_id'] ?? Tenant::id());
+        Tenant::enforceScope($targetId);
+
+        $hospitalName = clean_input($_POST['hospital_name'] ?? '');
+        $hospitalCode = clean_input($_POST['hospital_code'] ?? '');
+        $tagline = clean_input($_POST['tagline'] ?? '');
+        $themeColor = clean_input($_POST['theme_color'] ?? '#0d9488');
+        $footerNotes = clean_input($_POST['footer_notes'] ?? '');
+        $mrnPrefix = strtoupper(clean_input($_POST['mrn_prefix'] ?? 'MRN'));
+        $invPrefix = strtoupper(clean_input($_POST['invoice_prefix'] ?? 'INV'));
+        $currency = clean_input($_POST['currency_symbol'] ?? 'PKR ');
+        $taxRate = (float)($_POST['default_tax_rate'] ?? 0);
+        $dateFormat = clean_input($_POST['date_format'] ?? 'd M, Y');
+        $timeZone = clean_input($_POST['time_zone'] ?? 'Asia/Karachi');
+        $phone = clean_input($_POST['phone'] ?? '');
+        $emergencyHotline = clean_input($_POST['emergency_hotline'] ?? '1122');
+        $email = clean_input($_POST['email'] ?? '');
+        $city = clean_input($_POST['city'] ?? '');
+        $country = clean_input($_POST['country'] ?? 'Pakistan');
+        $licenseNum = clean_input($_POST['license_number'] ?? '');
+        $taxNum = clean_input($_POST['tax_number'] ?? '');
+        $address = clean_input($_POST['address'] ?? '');
+
+        // Module settings
+        $enabledModules = [];
+        if (!empty($_POST['modules']) && is_array($_POST['modules'])) {
+            foreach ($_POST['modules'] as $modKey => $val) {
+                $enabledModules[clean_input($modKey)] = true;
+            }
+        }
+        $modulesJson = json_encode($enabledModules);
+
+        try {
+            $stmt = $db->prepare("
+                UPDATE `hospital_profiles` SET
+                    `hospital_name` = ?,
+                    `hospital_code` = ?,
+                    `tagline` = ?,
+                    `theme_color` = ?,
+                    `footer_notes` = ?,
+                    `mrn_prefix` = ?,
+                    `invoice_prefix` = ?,
+                    `currency_symbol` = ?,
+                    `default_tax_rate` = ?,
+                    `date_format` = ?,
+                    `time_zone` = ?,
+                    `phone` = ?,
+                    `emergency_hotline` = ?,
+                    `email` = ?,
+                    `city` = ?,
+                    `country` = ?,
+                    `license_number` = ?,
+                    `tax_number` = ?,
+                    `address` = ?,
+                    `modules_enabled` = ?,
+                    `updated_at` = NOW()
+                WHERE id = ?
+            ");
+            $stmt->execute([
+                $hospitalName, $hospitalCode, $tagline, $themeColor, $footerNotes,
+                $mrnPrefix, $invPrefix, $currency, $taxRate, $dateFormat, $timeZone,
+                $phone, $emergencyHotline, $email, $city, $country,
+                $licenseNum, $taxNum, $address, $modulesJson,
+                $targetId
+            ]);
+
+            AuditLogger::log('UPDATE', 'hospital_profiles', $targetId, null, [
+                'hospital_name' => $hospitalName,
+                'theme_color' => $themeColor,
+                'mrn_prefix' => $mrnPrefix
+            ]);
+
+            set_flash('success', 'Hospital customization preferences saved successfully.');
+            header("Location: index.php?page=hospital_customization&hospital_id=" . $targetId);
+            exit;
+        } catch (Exception $e) {
+            set_flash('danger', 'Failed to update hospital customization: ' . $e->getMessage());
+            header("Location: index.php?page=hospital_customization&hospital_id=" . $targetId);
+            exit;
+        }
+    }
+
     // 2.4 Download Official Credentials PDF Action
     if ($action === 'download_credentials_pdf') {
         Auth::requireRole(['super_admin', 'hospital_admin']);
@@ -78,7 +291,7 @@ if ($action !== null) {
         }
 
         $conditions = [];
-        $params = [];
+        $params = [Tenant::id()];
         if (!empty($phone)) {
             $conditions[] = "phone_primary = ?";
             $params[] = $phone;
@@ -88,7 +301,7 @@ if ($action !== null) {
             $params[] = $cnic;
         }
 
-        $sql = "SELECT id, mrn, first_name, last_name, phone_primary, national_id, created_at FROM `patients` WHERE " . implode(' OR ', $conditions) . " LIMIT 1";
+        $sql = "SELECT id, mrn, first_name, last_name, phone_primary, national_id, created_at FROM `patients` WHERE hospital_id = ? AND (" . implode(' OR ', $conditions) . ") LIMIT 1";
         $dupStmt = $db->prepare($sql);
         $dupStmt->execute($params);
         $found = $dupStmt->fetch();
@@ -141,11 +354,11 @@ if ($action !== null) {
 
             $stmt = $db->prepare("
                 INSERT INTO `patients` 
-                (`mrn`, `first_name`, `last_name`, `gender`, `dob`, `age`, `blood_group`, `marital_status`, `national_id`, `phone_primary`, `phone_secondary`, `email`, `address`, `city`, `emergency_contact_name`, `emergency_contact_relation`, `emergency_contact_phone`, `registered_by`)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (`hospital_id`, `mrn`, `first_name`, `last_name`, `gender`, `dob`, `age`, `blood_group`, `marital_status`, `national_id`, `phone_primary`, `phone_secondary`, `email`, `address`, `city`, `emergency_contact_name`, `emergency_contact_relation`, `emergency_contact_phone`, `registered_by`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->execute([
-                $mrn, $firstName, $lastName, $gender, $dob, $age, $bloodGroup, $maritalStatus,
+                Tenant::id(), $mrn, $firstName, $lastName, $gender, $dob, $age, $bloodGroup, $maritalStatus,
                 $nationalId, $phonePrimary, $phoneSecondary, $email, $address, $city,
                 $emergencyName, $emergencyRelation, $emergencyPhone, Auth::id()
             ]);
@@ -157,10 +370,10 @@ if ($action !== null) {
                 $allergyType = clean_input($_POST['allergy_type'] ?? 'Drug');
                 $allergySeverity = clean_input($_POST['allergy_severity'] ?? 'Moderate');
                 $algStmt = $db->prepare("
-                    INSERT INTO `patient_allergies` (`patient_id`, `allergy_type`, `allergen_name`, `severity`, `recorded_by`)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO `patient_allergies` (`hospital_id`, `patient_id`, `allergy_type`, `allergen_name`, `severity`, `recorded_by`)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 ");
-                $algStmt->execute([$newPatientId, $allergyType, $allergenName, $allergySeverity, Auth::id()]);
+                $algStmt->execute([Tenant::id(), $newPatientId, $allergyType, $allergenName, $allergySeverity, Auth::id()]);
             }
 
             // Check if instant appointment booking was requested
@@ -184,10 +397,10 @@ if ($action !== null) {
                     $aptNum = generate_appointment_number($db, $aptDate);
                     $insApt = $db->prepare("
                         INSERT INTO `appointments` 
-                        (`appointment_number`, `patient_id`, `doctor_id`, `department_id`, `appointment_date`, `slot_time`, `token_number`, `type`, `status`, `reason_for_visit`, `created_by`)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'New', 'Scheduled', ?, ?)
+                        (`hospital_id`, `appointment_number`, `patient_id`, `doctor_id`, `department_id`, `appointment_date`, `slot_time`, `token_number`, `type`, `status`, `reason_for_visit`, `created_by`)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'New', 'Scheduled', ?, ?)
                     ");
-                    $insApt->execute([$aptNum, $newPatientId, $docId, $deptId, $aptDate, $slotTime, $tokenNum, $visitReason, Auth::id()]);
+                    $insApt->execute([Tenant::id(), $aptNum, $newPatientId, $docId, $deptId, $aptDate, $slotTime, $tokenNum, $visitReason, Auth::id()]);
                     $newAptId = (int)$db->lastInsertId();
                 }
             }
@@ -236,10 +449,10 @@ if ($action !== null) {
 
         $stmt = $db->prepare("
             INSERT INTO `appointments` 
-            (`appointment_number`, `patient_id`, `doctor_id`, `department_id`, `appointment_date`, `slot_time`, `token_number`, `type`, `status`, `reason_for_visit`, `created_by`)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?)
+            (`hospital_id`, `appointment_number`, `patient_id`, `doctor_id`, `department_id`, `appointment_date`, `slot_time`, `token_number`, `type`, `status`, `reason_for_visit`, `created_by`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?)
         ");
-        $stmt->execute([$aptNum, $patientId, $doctorId, $deptId, $appointmentDate, $slotTime, $tokenNumber, $type, $reason, Auth::id()]);
+        $stmt->execute([Tenant::id(), $aptNum, $patientId, $doctorId, $deptId, $appointmentDate, $slotTime, $tokenNumber, $type, $reason, Auth::id()]);
 
         $newAptId = (int)$db->lastInsertId();
         AuditLogger::log('CREATE', 'appointments', $newAptId, null, ['apt_number' => $aptNum]);
@@ -888,15 +1101,15 @@ if ($action !== null) {
     // 15. Create Department
     if ($action === 'department_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']);
 
         $deptName = clean_input($_POST['department_name'] ?? '');
         $code = clean_input($_POST['code'] ?? '');
         $type = clean_input($_POST['type'] ?? 'Clinical');
         $desc = clean_input($_POST['description'] ?? '');
 
-        $stmt = $db->prepare("INSERT INTO `departments` (`department_name`, `code`, `type`, `description`, `status`) VALUES (?, ?, ?, ?, 'Active')");
-        $stmt->execute([$deptName, $code, $type, $desc]);
+        $stmt = $db->prepare("INSERT INTO `departments` (`hospital_id`, `department_name`, `code`, `type`, `description`, `status`) VALUES (?, ?, ?, ?, ?, 'Active')");
+        $stmt->execute([Tenant::id(), $deptName, $code, $type, $desc]);
 
         AuditLogger::log('CREATE', 'departments', $db->lastInsertId(), null, ['code' => $code, 'name' => $deptName]);
         set_flash('success', "Department '$deptName' created successfully.");
@@ -907,15 +1120,15 @@ if ($action !== null) {
     // 16. Create Ward
     if ($action === 'ward_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']);
 
         $wardName = clean_input($_POST['ward_name'] ?? '');
         $code = clean_input($_POST['code'] ?? '');
         $type = clean_input($_POST['ward_type'] ?? 'General_Male');
         $floor = clean_input($_POST['floor_number'] ?? '1st Floor');
 
-        $stmt = $db->prepare("INSERT INTO `wards` (`ward_name`, `code`, `ward_type`, `floor_number`, `status`) VALUES (?, ?, ?, ?, 'Active')");
-        $stmt->execute([$wardName, $code, $type, $floor]);
+        $stmt = $db->prepare("INSERT INTO `wards` (`hospital_id`, `ward_name`, `code`, `ward_type`, `floor_number`, `status`) VALUES (?, ?, ?, ?, ?, 'Active')");
+        $stmt->execute([Tenant::id(), $wardName, $code, $type, $floor]);
         $wardId = (int)$db->lastInsertId();
 
         // Create a default room inside this ward
@@ -931,7 +1144,7 @@ if ($action !== null) {
     // 17. Create Bed
     if ($action === 'bed_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']);
 
         $roomId = (int)($_POST['room_id'] ?? 0);
         $bedNumber = clean_input($_POST['bed_number'] ?? '');
@@ -950,7 +1163,7 @@ if ($action !== null) {
     // 18. Create Service Tariff
     if ($action === 'tariff_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']);
 
         $name = clean_input($_POST['service_name'] ?? '');
         $code = clean_input($_POST['service_code'] ?? '');
@@ -958,8 +1171,8 @@ if ($action !== null) {
         $deptId = !empty($_POST['department_id']) ? (int)$_POST['department_id'] : null;
         $price = (float)($_POST['standard_price'] ?? 0.00);
 
-        $stmt = $db->prepare("INSERT INTO `tariff_services` (`department_id`, `service_name`, `service_code`, `category`, `standard_price`, `is_active`) VALUES (?, ?, ?, ?, ?, 1)");
-        $stmt->execute([$deptId, $name, $code, $cat, $price]);
+        $stmt = $db->prepare("INSERT INTO `tariff_services` (`hospital_id`, `department_id`, `service_name`, `service_code`, `category`, `standard_price`, `is_active`) VALUES (?, ?, ?, ?, ?, ?, 1)");
+        $stmt->execute([Tenant::id(), $deptId, $name, $code, $cat, $price]);
 
         AuditLogger::log('CREATE', 'tariff_services', $db->lastInsertId(), null, ['service_code' => $code]);
         set_flash('success', "Service '$name' added to official tariff catalog.");
@@ -970,7 +1183,7 @@ if ($action !== null) {
     // 19. Create Drug Item
     if ($action === 'drug_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist', 'hospital_owner', 'platform_admin']);
 
         $brand = clean_input($_POST['brand_name'] ?? '');
         $generic = clean_input($_POST['generic_name'] ?? '');
@@ -978,8 +1191,8 @@ if ($action !== null) {
         $form = clean_input($_POST['dosage_form'] ?? 'Tablet');
         $strength = clean_input($_POST['strength'] ?? '500mg');
 
-        $stmt = $db->prepare("INSERT INTO `drug_items` (`category_id`, `brand_name`, `generic_name`, `dosage_form`, `strength`, `status`) VALUES (?, ?, ?, ?, ?, 'Active')");
-        $stmt->execute([$catId, $brand, $generic, $form, $strength]);
+        $stmt = $db->prepare("INSERT INTO `drug_items` (`hospital_id`, `category_id`, `brand_name`, `generic_name`, `dosage_form`, `strength`, `status`) VALUES (?, ?, ?, ?, ?, ?, 'Active')");
+        $stmt->execute([Tenant::id(), $catId, $brand, $generic, $form, $strength]);
 
         AuditLogger::log('CREATE', 'drug_items', $db->lastInsertId(), null, ['brand' => $brand]);
         set_flash('success', "Medicine '$brand' added to formulary.");
@@ -990,7 +1203,7 @@ if ($action !== null) {
     // 20. Add Drug Batch Stock
     if ($action === 'drug_batch_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist', 'hospital_owner', 'platform_admin']);
 
         $drugId = (int)($_POST['drug_item_id'] ?? 0);
         $batchNo = clean_input($_POST['batch_number'] ?? '');
@@ -1001,10 +1214,10 @@ if ($action !== null) {
 
         $stmt = $db->prepare("
             INSERT INTO `drug_batches` 
-            (`drug_item_id`, `batch_number`, `expiry_date`, `unit_purchase_price`, `unit_sale_price`, `initial_quantity`, `current_quantity`, `status`)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'Active')
+            (`hospital_id`, `drug_item_id`, `batch_number`, `expiry_date`, `unit_purchase_price`, `unit_sale_price`, `initial_quantity`, `current_quantity`, `status`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Active')
         ");
-        $stmt->execute([$drugId, $batchNo, $expiry, $cost, $sale, $qty, $qty]);
+        $stmt->execute([Tenant::id(), $drugId, $batchNo, $expiry, $cost, $sale, $qty, $qty]);
 
         AuditLogger::log('CREATE', 'drug_batches', $db->lastInsertId(), null, ['batch_number' => $batchNo, 'qty' => $qty]);
         set_flash('success', "Batch '$batchNo' ($qty units) received into pharmacy inventory.");
@@ -1015,7 +1228,7 @@ if ($action !== null) {
     // 21. Create Lab Test
     if ($action === 'lab_test_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin', 'lab_technician']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'lab_technician', 'hospital_owner', 'platform_admin']);
 
         $name = clean_input($_POST['test_name'] ?? '');
         $code = clean_input($_POST['test_code'] ?? '');
@@ -1024,8 +1237,8 @@ if ($action !== null) {
         $tat = (int)($_POST['turnaround_hours'] ?? 6);
         $price = (float)($_POST['standard_price'] ?? 500.00);
 
-        $stmt = $db->prepare("INSERT INTO `lab_tests` (`category_id`, `test_name`, `test_code`, `specimen_type`, `turnaround_hours`, `standard_price`, `status`) VALUES (?, ?, ?, ?, ?, ?, 'Active')");
-        $stmt->execute([$catId, $name, $code, $specimen, $tat, $price]);
+        $stmt = $db->prepare("INSERT INTO `lab_tests` (`hospital_id`, `category_id`, `test_name`, `test_code`, `specimen_type`, `turnaround_hours`, `standard_price`, `status`) VALUES (?, ?, ?, ?, ?, ?, ?, 'Active')");
+        $stmt->execute([Tenant::id(), $catId, $name, $code, $specimen, $tat, $price]);
         $testId = (int)$db->lastInsertId();
 
         // Add primary parameter
@@ -1041,7 +1254,7 @@ if ($action !== null) {
     // 22. Create Staff Account
     if ($action === 'user_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']);
 
         $username = clean_input($_POST['username'] ?? '');
         $password = $_POST['password'] ?? 'Admin@123';
@@ -1073,10 +1286,10 @@ if ($action !== null) {
         try {
             $stmt = $db->prepare("
                 INSERT INTO `users` 
-                (`username`, `email`, `password_hash`, `full_name`, `phone`, `role_id`, `department_id`, `designation`, `consultation_fee`, `status`)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active')
+                (`hospital_id`, `username`, `email`, `password_hash`, `full_name`, `phone`, `role_id`, `department_id`, `designation`, `consultation_fee`, `status`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active')
             ");
-            $stmt->execute([$username, $email, $hash, $fullName, $phone, $roleId, $deptId, $designation, $fee]);
+            $stmt->execute([Tenant::id(), $username, $email, $hash, $fullName, $phone, $roleId, $deptId, $designation, $fee]);
             $newUserId = (int)$db->lastInsertId();
 
             AuditLogger::log('CREATE', 'users', $newUserId, null, ['username' => $username, 'role_id' => $roleId, 'full_name' => $fullName]);
@@ -1093,7 +1306,7 @@ if ($action !== null) {
     // 22.1 Toggle User Status (Active / Inactive)
     if ($action === 'user_status_toggle') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']);
 
         $targetUserId = (int)($_POST['user_id'] ?? $_GET['user_id'] ?? 0);
 
@@ -1103,11 +1316,12 @@ if ($action !== null) {
             exit;
         }
 
-        $uStmt = $db->prepare("SELECT id, username, full_name, status FROM `users` WHERE `id` = ?");
+        $uStmt = $db->prepare("SELECT id, hospital_id, username, full_name, status FROM `users` WHERE `id` = ?");
         $uStmt->execute([$targetUserId]);
         $targetUser = $uStmt->fetch();
 
         if ($targetUser) {
+            Tenant::enforceScope((int)$targetUser['hospital_id']);
             $newStatus = ($targetUser['status'] === 'Active') ? 'Inactive' : 'Active';
             $db->prepare("UPDATE `users` SET `status` = ? WHERE `id` = ?")->execute([$newStatus, $targetUserId]);
 
@@ -1121,7 +1335,7 @@ if ($action !== null) {
     // 22.2 Reset Staff Password
     if ($action === 'user_reset_password' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']);
 
         $targetUserId = (int)($_POST['user_id'] ?? 0);
         $newPassword = $_POST['new_password'] ?? 'Admin@123';
@@ -1130,11 +1344,12 @@ if ($action !== null) {
             $newPassword = 'Admin@123';
         }
 
-        $uStmt = $db->prepare("SELECT id, username, full_name FROM `users` WHERE `id` = ?");
+        $uStmt = $db->prepare("SELECT id, hospital_id, username, full_name FROM `users` WHERE `id` = ?");
         $uStmt->execute([$targetUserId]);
         $targetUser = $uStmt->fetch();
 
         if ($targetUser) {
+            Tenant::enforceScope((int)$targetUser['hospital_id']);
             $hash = password_hash($newPassword, PASSWORD_BCRYPT);
             $db->prepare("UPDATE `users` SET `password_hash` = ? WHERE `id` = ?")->execute([$hash, $targetUserId]);
 
@@ -2411,25 +2626,45 @@ $routes = [
         'title' => 'Reports & Operational Analytics',
         'roles' => ['super_admin', 'hospital_admin', 'cashier']
     ],
+    'platform_dashboard' => [
+        'file' => 'views/admin/platform_dashboard.php',
+        'title' => 'Platform Super Admin Console',
+        'roles' => ['platform_admin']
+    ],
+    'platform_hospitals' => [
+        'file' => 'views/admin/platform_hospitals.php',
+        'title' => 'Hospital Facilities & Tenant Directory',
+        'roles' => ['platform_admin']
+    ],
+    'hospital_customization' => [
+        'file' => 'views/admin/hospital_customization.php',
+        'title' => 'Hospital Customization & Branding',
+        'roles' => ['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']
+    ],
     'settings' => [
         'file' => 'views/admin/settings.php', 
         'title' => 'Hospital Masters & Dynamic Settings',
-        'roles' => ['super_admin', 'hospital_admin']
+        'roles' => ['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']
     ],
     'users' => [
         'file' => 'views/admin/users.php', 
         'title' => 'Hospital Staff & System Accounts',
-        'roles' => ['super_admin', 'hospital_admin']
+        'roles' => ['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']
     ],
     'audit_logs' => [
         'file' => 'views/admin/audit_logs.php', 
         'title' => 'Forensic Security & Audit Trail',
-        'roles' => ['super_admin', 'hospital_admin']
+        'roles' => ['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']
     ],
 ];
 
+// If platform admin and no hospital context active, default to platform dashboard
+if (Auth::isPlatformAdmin() && empty($_SESSION['platform_active_hospital_id']) && (!isset($_GET['page']) || $_GET['page'] === 'dashboard')) {
+    $page = 'platform_dashboard';
+}
+
 if (!isset($routes[$page])) {
-    $page = 'dashboard';
+    $page = Auth::isPlatformAdmin() && empty($_SESSION['platform_active_hospital_id']) ? 'platform_dashboard' : 'dashboard';
 }
 
 $targetRoute = $routes[$page];

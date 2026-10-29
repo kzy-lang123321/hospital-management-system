@@ -3,20 +3,26 @@
  * Hospital Management System (HMS) - Staff & User Accounts
  */
 require_once __DIR__ . '/../../config/database.php';
-Auth::requireRole(['super_admin', 'hospital_admin']);
+Auth::requireRole(['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']);
 
 $db = Database::getConnection();
+$hId = Tenant::id();
 
-$users = $db->query("
+$stmt = $db->prepare("
     SELECT u.*, r.role_name, d.department_name
     FROM `users` u
     JOIN `roles` r ON u.role_id = r.id
     LEFT JOIN `departments` d ON u.department_id = d.id
+    WHERE u.hospital_id = ?
     ORDER BY u.id ASC
-")->fetchAll();
+");
+$stmt->execute([$hId]);
+$users = $stmt->fetchAll();
 
-$roles = $db->query("SELECT * FROM `roles` ORDER BY id ASC")->fetchAll();
-$departments = $db->query("SELECT * FROM `departments` ORDER BY department_name ASC")->fetchAll();
+$roles = $db->query("SELECT * FROM `roles` WHERE slug NOT IN ('platform_admin') ORDER BY id ASC")->fetchAll();
+$deptStmt = $db->prepare("SELECT * FROM `departments` WHERE hospital_id = ? ORDER BY department_name ASC");
+$deptStmt->execute([$hId]);
+$departments = $deptStmt->fetchAll();
 ?>
 
 <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">

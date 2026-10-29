@@ -1,20 +1,23 @@
 <?php
 /**
  * Hospital Management System (HMS)
- * Authentication & Authorization (RBAC) Service
+ * Authentication & Authorization (RBAC) Service - Multi-Hospital Aware
  */
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/Tenant.php';
 require_once __DIR__ . '/AuditLogger.php';
 
 class Auth {
     public static function attempt(string $username, string $password): bool {
         $db = Database::getConnection();
         $stmt = $db->prepare("
-            SELECT u.*, r.slug AS role_slug, r.role_name, d.department_name 
+            SELECT u.*, r.slug AS role_slug, r.role_name, d.department_name,
+                   hp.status AS hospital_status, hp.hospital_name, hp.hospital_code
             FROM `users` u
             JOIN `roles` r ON u.role_id = r.id
             LEFT JOIN `departments` d ON u.department_id = d.id
+            LEFT JOIN `hospital_profiles` hp ON u.hospital_id = hp.id
             WHERE (u.username = ? OR u.email = ?) AND u.status = 'Active'
             LIMIT 1
         ");
@@ -22,25 +25,44 @@ class Auth {
         $user = $stmt->fetch();
 
         if ($user && password_verify($password, $user['password_hash'])) {
+            // Check Hospital Suspension Status (if user belongs to a hospital)
+            if (!empty($user['hospital_id']) && $user['hospital_status'] === 'Suspended') {
+                set_flash('danger', 'Your hospital facility account is currently suspended. Please contact the Platform Administrator.');
+                return false;
+            }
+
             // Setup Session
             $_SESSION['user'] = [
-                'id' => $user['id'],
+                'id' => (int)$user['id'],
+                'hospital_id' => $user['hospital_id'] !== null ? (int)$user['hospital_id'] : null,
+                'hospital_name' => $user['hospital_name'] ?? 'Platform Core',
+                'hospital_code' => $user['hospital_code'] ?? 'SYSTEM',
                 'username' => $user['username'],
                 'full_name' => $user['full_name'],
                 'email' => $user['email'],
-                'role_id' => $user['role_id'],
+                'role_id' => (int)$user['role_id'],
                 'role_slug' => $user['role_slug'],
                 'role_name' => $user['role_name'],
-                'department_id' => $user['department_id'],
+                'department_id' => $user['department_id'] ? (int)$user['department_id'] : null,
                 'department_name' => $user['department_name'],
                 'designation' => $user['designation'],
             ];
+
+            Tenant::reset();
+
+            // If platform admin, reset any previous active hospital switch
+            if ($user['role_slug'] === 'platform_admin') {
+                unset($_SESSION['platform_active_hospital_id']);
+            }
 
             // Update last login
             $updateStmt = $db->prepare("UPDATE `users` SET `last_login_at` = NOW() WHERE `id` = ?");
             $updateStmt->execute([$user['id']]);
 
-            AuditLogger::log('LOGIN', 'users', $user['id'], null, ['username' => $user['username']]);
+            AuditLogger::log('LOGIN', 'users', $user['id'], null, [
+                'username' => $user['username'],
+                'hospital_id' => $user['hospital_id']
+            ]);
             return true;
         }
 
@@ -59,14 +81,38 @@ class Auth {
         return $_SESSION['user']['id'] ?? null;
     }
 
+    public static function hospitalId(): int {
+        return Tenant::id();
+    }
+
     public static function role(): ?string {
         return $_SESSION['user']['role_slug'] ?? null;
+    }
+
+    public static function isPlatformAdmin(): bool {
+        return self::role() === 'platform_admin';
+    }
+
+    public static function isHospitalOwner(): bool {
+        $role = self::role();
+        return in_array($role, ['hospital_owner', 'super_admin', 'platform_admin'], true);
     }
 
     public static function hasRole(array $allowedRoles): bool {
         if (!self::check()) return false;
         $currentRole = self::role();
-        if ($currentRole === 'super_admin') return true; // Super admin bypasses all role checks
+        
+        // Platform admin has universal administrative access
+        if ($currentRole === 'platform_admin') return true;
+        
+        // Hospital Super Admin or Owner has full hospital module access
+        if (in_array($currentRole, ['super_admin', 'hospital_owner'], true)) {
+            // Can access all hospital operational modules
+            if (!in_array('platform_admin', $allowedRoles, true)) {
+                return true;
+            }
+        }
+
         return in_array($currentRole, $allowedRoles, true);
     }
 
@@ -82,10 +128,10 @@ class Auth {
         if (!self::hasRole($allowedRoles)) {
             http_response_code(403);
             die("
-                <div style='font-family:sans-serif;max-width:600px;margin:4rem auto;padding:2rem;border:1px solid #e2e8f0;border-radius:8px;background:#fff;'>
+                <div style='font-family:sans-serif;max-width:600px;margin:4rem auto;padding:2rem;border:1px solid #e2e8f0;border-radius:12px;background:#fff;'>
                     <h2 style='color:#dc2626;'>403 - Access Prohibited</h2>
                     <p style='color:#475569;'>Your current role (<strong>" . htmlspecialchars(self::user()['role_name'] ?? '') . "</strong>) does not have authorization to access this clinical/financial module.</p>
-                    <a href='index.php?page=dashboard' style='display:inline-block;margin-top:1rem;padding:0.5rem 1rem;background:#0d9488;color:#fff;text-decoration:none;border-radius:4px;'>Return to Dashboard</a>
+                    <a href='index.php?page=dashboard' style='display:inline-block;margin-top:1rem;padding:0.5rem 1rem;background:#0d9488;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;'>Return to Dashboard</a>
                 </div>
             ");
         }
@@ -96,6 +142,7 @@ class Auth {
             AuditLogger::log('LOGOUT', 'users', self::id(), null, ['username' => self::user()['username']]);
         }
         unset($_SESSION['user']);
+        unset($_SESSION['platform_active_hospital_id']);
         session_destroy();
     }
 }

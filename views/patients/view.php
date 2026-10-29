@@ -18,6 +18,8 @@ if (!$patient) {
     return;
 }
 
+Tenant::enforceScope((int)$patient['hospital_id']);
+
 // 2. Fetch Allergies
 $allergiesStmt = $db->prepare("SELECT * FROM `patient_allergies` WHERE `patient_id` = ?");
 $allergiesStmt->execute([$patientId]);

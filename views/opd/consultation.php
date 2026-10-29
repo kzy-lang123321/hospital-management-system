@@ -8,11 +8,13 @@ $db = Database::getConnection();
 $encounterId = (int)($_GET['encounter_id'] ?? 0);
 $patientId = (int)($_GET['patient_id'] ?? 0);
 
+$hId = Tenant::id();
+
 // If patient_id passed without encounter_id, find or start an encounter
 if ($encounterId === 0 && $patientId > 0) {
     // Check if patient already has an in-progress encounter today
-    $activeEnc = $db->prepare("SELECT id FROM `encounters` WHERE `patient_id` = ? AND `encounter_status` = 'In-Progress' ORDER BY id DESC LIMIT 1");
-    $activeEnc->execute([$patientId]);
+    $activeEnc = $db->prepare("SELECT id FROM `encounters` WHERE `patient_id` = ? AND `encounter_status` = 'In-Progress' AND `hospital_id` = ? ORDER BY id DESC LIMIT 1");
+    $activeEnc->execute([$patientId, $hId]);
     $existing = $activeEnc->fetch();
     if ($existing) {
         $encounterId = (int)$existing['id'];
@@ -23,25 +25,27 @@ if ($encounterId === 0 && $patientId > 0) {
         $docId = Auth::id() ?? 2; // fallback to Dr. Tariq if admin
         $newStmt = $db->prepare("
             INSERT INTO `encounters` 
-            (`encounter_number`, `patient_id`, `encounter_type`, `department_id`, `attending_doctor_id`, `admission_datetime`, `encounter_status`, `created_by`) 
-            VALUES (?, ?, 'OPD', 2, ?, NOW(), 'In-Progress', ?)
+            (`hospital_id`, `encounter_number`, `patient_id`, `encounter_type`, `department_id`, `attending_doctor_id`, `admission_datetime`, `encounter_status`, `created_by`) 
+            VALUES (?, ?, ?, 'OPD', 2, ?, NOW(), 'In-Progress', ?)
         ");
-        $newStmt->execute([$encNumber, $patientId, $docId, Auth::id()]);
+        $newStmt->execute([$hId, $encNumber, $patientId, $docId, Auth::id()]);
         $encounterId = (int)$db->lastInsertId();
     }
 }
 
 // Fetch In-Progress Queue
-$queue = $db->query("
+$queueStmt = $db->prepare("
     SELECT e.*, p.mrn, p.first_name, p.last_name, p.gender, p.age, p.blood_group,
            u.full_name AS doctor_name, d.department_name
     FROM `encounters` e
     JOIN `patients` p ON e.patient_id = p.id
     JOIN `users` u ON e.attending_doctor_id = u.id
     JOIN `departments` d ON e.department_id = d.id
-    WHERE e.encounter_status = 'In-Progress'
+    WHERE e.encounter_status = 'In-Progress' AND e.hospital_id = ?
     ORDER BY e.admission_datetime ASC
-")->fetchAll();
+");
+$queueStmt->execute([$hId]);
+$queue = $queueStmt->fetchAll();
 
 // If no encounter specified, default to first in queue
 if ($encounterId === 0 && !empty($queue)) {

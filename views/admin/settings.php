@@ -3,32 +3,45 @@
  * Hospital Management System (HMS) - Hospital Masters & System Settings
  */
 require_once __DIR__ . '/../../config/database.php';
-Auth::requireRole(['super_admin', 'hospital_admin']);
+Auth::requireRole(['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin']);
 
 $db = Database::getConnection();
 $activeTab = clean_input($_GET['tab'] ?? 'profile');
+$hId = Tenant::id();
 
 // 1. Fetch Hospital Profile
-$hpStmt = $db->query("SELECT * FROM `hospital_profiles` ORDER BY id ASC LIMIT 1");
-$profile = $hpStmt->fetch() ?: [];
+$profile = Tenant::profile($hId);
 
 // 2. Fetch Departments
-$departments = $db->query("SELECT * FROM `departments` ORDER BY department_name ASC")->fetchAll();
+$deptStmt = $db->prepare("SELECT * FROM `departments` WHERE hospital_id = ? ORDER BY department_name ASC");
+$deptStmt->execute([$hId]);
+$departments = $deptStmt->fetchAll();
 
 // 3. Fetch Wards & Rooms
-$wards = $db->query("SELECT * FROM `wards` ORDER BY id ASC")->fetchAll();
-$rooms = $db->query("SELECT r.*, w.ward_name FROM `rooms` r JOIN `wards` w ON r.ward_id = w.id ORDER BY r.id ASC")->fetchAll();
+$wardStmt = $db->prepare("SELECT * FROM `wards` WHERE hospital_id = ? ORDER BY id ASC");
+$wardStmt->execute([$hId]);
+$wards = $wardStmt->fetchAll();
+
+$roomStmt = $db->prepare("SELECT r.*, w.ward_name FROM `rooms` r JOIN `wards` w ON r.ward_id = w.id WHERE w.hospital_id = ? ORDER BY r.id ASC");
+$roomStmt->execute([$hId]);
+$rooms = $roomStmt->fetchAll();
 
 // 4. Fetch Tariffs
-$tariffs = $db->query("SELECT t.*, d.department_name FROM `tariff_services` t LEFT JOIN `departments` d ON t.department_id = d.id ORDER BY t.service_name ASC")->fetchAll();
+$tariffStmt = $db->prepare("SELECT t.*, d.department_name FROM `tariff_services` t LEFT JOIN `departments` d ON t.department_id = d.id WHERE t.hospital_id = ? ORDER BY t.service_name ASC");
+$tariffStmt->execute([$hId]);
+$tariffs = $tariffStmt->fetchAll();
 
 // 5. Fetch Drug Categories & Items
 $drugCategories = $db->query("SELECT * FROM `drug_categories` ORDER BY category_name ASC")->fetchAll();
-$drugItems = $db->query("SELECT d.*, c.category_name FROM `drug_items` d JOIN `drug_categories` c ON d.category_id = c.id ORDER BY d.brand_name ASC")->fetchAll();
+$drugItemStmt = $db->prepare("SELECT d.*, c.category_name FROM `drug_items` d JOIN `drug_categories` c ON d.category_id = c.id WHERE d.hospital_id = ? ORDER BY d.brand_name ASC");
+$drugItemStmt->execute([$hId]);
+$drugItems = $drugItemStmt->fetchAll();
 
 // 6. Fetch Lab Categories & Tests
 $labCategories = $db->query("SELECT * FROM `lab_categories` ORDER BY category_name ASC")->fetchAll();
-$labTests = $db->query("SELECT lt.*, lc.category_name FROM `lab_tests` lt JOIN `lab_categories` lc ON lt.category_id = lc.id ORDER BY lt.test_name ASC")->fetchAll();
+$labTestStmt = $db->prepare("SELECT lt.*, lc.category_name FROM `lab_tests` lt JOIN `lab_categories` lc ON lt.category_id = lc.id WHERE lt.hospital_id = ? ORDER BY lt.test_name ASC");
+$labTestStmt->execute([$hId]);
+$labTests = $labTestStmt->fetchAll();
 ?>
 
 <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">

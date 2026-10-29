@@ -9,12 +9,13 @@ $search = clean_input($_GET['search'] ?? '');
 $genderFilter = clean_input($_GET['gender'] ?? '');
 $bloodFilter = clean_input($_GET['blood_group'] ?? '');
 
+$hId = Tenant::id();
 $query = "SELECT p.*, 
                  (SELECT COUNT(*) FROM `encounters` WHERE `patient_id` = p.id) AS total_encounters,
                  (SELECT `allergen_name` FROM `patient_allergies` WHERE `patient_id` = p.id LIMIT 1) AS sample_allergy
           FROM `patients` p 
-          WHERE 1=1";
-$params = [];
+          WHERE p.hospital_id = ?";
+$params = [$hId];
 
 if ($search !== '') {
     $query .= " AND (p.mrn LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR p.phone_primary LIKE ? OR p.national_id LIKE ?)";

@@ -9,7 +9,8 @@ $activeTab = clean_input($_GET['tab'] ?? 'queue');
 $rxSearch = clean_input($_GET['search'] ?? '');
 $printReceiptRxId = (int)($_GET['print_receipt'] ?? 0);
 
-// Fetch Prescriptions Queue with optional search
+// Fetch Prescriptions Queue with optional search for current hospital
+$hId = Tenant::id();
 $rxQuery = "
     SELECT p.*, e.encounter_number, e.encounter_type,
            pt.id AS patient_id, pt.first_name, pt.last_name, pt.mrn, pt.gender, pt.age,
@@ -19,12 +20,13 @@ $rxQuery = "
     JOIN `encounters` e ON p.encounter_id = e.id
     JOIN `patients` pt ON e.patient_id = pt.id
     JOIN `users` u ON p.doctor_id = u.id
+    WHERE p.hospital_id = ?
 ";
-$rxParams = [];
+$rxParams = [$hId];
 if (!empty($rxSearch)) {
-    $rxQuery .= " WHERE p.prescription_number LIKE ? OR pt.mrn LIKE ? OR pt.first_name LIKE ? OR pt.last_name LIKE ?";
+    $rxQuery .= " AND (p.prescription_number LIKE ? OR pt.mrn LIKE ? OR pt.first_name LIKE ? OR pt.last_name LIKE ?)";
     $searchTerm = "%$rxSearch%";
-    $rxParams = [$searchTerm, $searchTerm, $searchTerm, $searchTerm];
+    $rxParams = array_merge($rxParams, [$searchTerm, $searchTerm, $searchTerm, $searchTerm]);
 }
 $rxQuery .= " ORDER BY p.id DESC";
 $rxStmt = $db->prepare($rxQuery);

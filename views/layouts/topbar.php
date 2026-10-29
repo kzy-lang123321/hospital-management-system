@@ -45,8 +45,55 @@ $hProfile = hospital_profile();
             <span class="font-semibold">ER Hotline:</span> <?= htmlspecialchars($hProfile['emergency_hotline'] ?? '1122') ?>
         </div>
 
-        <!-- Role Badge -->
+        <!-- Role Badge & Hospital Context Switcher -->
         <div class="flex items-center gap-2 sm:border-l sm:border-slate-200 sm:pl-4">
+            <?php if (Auth::isPlatformAdmin()): ?>
+                <!-- Platform Admin Hospital Switcher Dropdown -->
+                <?php
+                $allFacilities = Tenant::allHospitals();
+                $activeHospId = Tenant::id();
+                $isSwitched = !empty($_SESSION['platform_active_hospital_id']);
+                ?>
+                <div class="relative group">
+                    <button type="button" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold <?= $isSwitched ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-indigo-50 text-indigo-700 border border-indigo-200' ?> hover:opacity-90 transition-all">
+                        <i class="fa-solid <?= $isSwitched ? 'fa-binoculars' : 'fa-hospital' ?>"></i>
+                        <span class="max-w-[120px] truncate"><?= htmlspecialchars($hProfile['hospital_name']) ?></span>
+                        <i class="fa-solid fa-chevron-down text-[10px] ml-0.5"></i>
+                    </button>
+                    <!-- Dropdown Menu -->
+                    <div class="hidden group-hover:block absolute right-0 mt-1 w-64 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50">
+                        <div class="px-3 py-1.5 border-b border-slate-100 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                            Switch Facility Context
+                        </div>
+                        <?php if ($isSwitched): ?>
+                        <form method="POST" action="index.php?action=clear_platform_context">
+                            <?= csrf_field() ?>
+                            <button type="submit" class="w-full text-left px-3 py-2 text-xs text-amber-700 hover:bg-amber-50 font-semibold flex items-center justify-between">
+                                <span><i class="fa-solid fa-arrow-left mr-1.5"></i> Return to Platform Scope</span>
+                                <span class="text-[10px] bg-amber-200 px-1.5 py-0.5 rounded">Reset</span>
+                            </button>
+                        </form>
+                        <div class="border-t border-slate-100 my-1"></div>
+                        <?php endif; ?>
+                        
+                        <div class="max-h-48 overflow-y-auto">
+                            <?php foreach ($allFacilities as $fac): ?>
+                            <form method="POST" action="index.php?action=switch_hospital">
+                                <?= csrf_field() ?>
+                                <input type="hidden" name="hospital_id" value="<?= $fac['id'] ?>">
+                                <button type="submit" class="w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-slate-50 <?= $fac['id'] === $activeHospId ? 'bg-indigo-50/70 font-bold text-indigo-700' : 'text-slate-700' ?>">
+                                    <span class="truncate pr-2"><?= htmlspecialchars($fac['hospital_name']) ?></span>
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono <?= $fac['status'] === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800' ?>">
+                                        <?= htmlspecialchars($fac['hospital_code'] ?? 'HOSP') ?>
+                                    </span>
+                                </button>
+                            </form>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+
             <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-medical-50 text-medical-700 border border-medical-200 max-w-[120px] sm:max-w-none truncate" title="<?= htmlspecialchars($currentUser['role_name'] ?? 'User') ?>">
                 <i class="fa-solid fa-user-shield text-[10px] mr-1"></i>
                 <span class="truncate"><?= htmlspecialchars($currentUser['role_name'] ?? 'User') ?></span>

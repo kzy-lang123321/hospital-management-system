@@ -5,16 +5,18 @@
 require_once __DIR__ . '/../../config/database.php';
 $db = Database::getConnection();
 
-// 1. Fetch Metrics
-$totalPatients = $db->query("SELECT COUNT(*) FROM `patients` WHERE `status` = 'Active'")->fetchColumn();
-$todayEncounters = $db->query("SELECT COUNT(*) FROM `encounters` WHERE DATE(`admission_datetime`) = CURDATE()")->fetchColumn();
-$totalBeds = $db->query("SELECT COUNT(*) FROM `beds`")->fetchColumn();
-$occupiedBeds = $db->query("SELECT COUNT(*) FROM `beds` WHERE `status` = 'Occupied'")->fetchColumn();
+$hId = Tenant::id();
+
+// 1. Fetch Metrics for active hospital scope
+$totalPatients = $db->query("SELECT COUNT(*) FROM `patients` WHERE `status` = 'Active' AND hospital_id = {$hId}")->fetchColumn();
+$todayEncounters = $db->query("SELECT COUNT(*) FROM `encounters` WHERE DATE(`admission_datetime`) = CURDATE() AND hospital_id = {$hId}")->fetchColumn();
+$totalBeds = $db->query("SELECT COUNT(*) FROM `beds` b JOIN `rooms` r ON b.room_id = r.id JOIN `wards` w ON r.ward_id = w.id WHERE w.hospital_id = {$hId}")->fetchColumn();
+$occupiedBeds = $db->query("SELECT COUNT(*) FROM `beds` b JOIN `rooms` r ON b.room_id = r.id JOIN `wards` w ON r.ward_id = w.id WHERE b.`status` = 'Occupied' AND w.hospital_id = {$hId}")->fetchColumn();
 $bedOccupancyPercent = $totalBeds > 0 ? round(($occupiedBeds / $totalBeds) * 100) : 0;
 
-$todayRevenue = $db->query("SELECT COALESCE(SUM(`amount_paid`), 0) FROM `payments` WHERE DATE(`payment_datetime`) = CURDATE()")->fetchColumn();
-$pendingLabs = $db->query("SELECT COUNT(*) FROM `lab_order_items` WHERE `item_status` IN ('Pending', 'Collected')")->fetchColumn();
-$pendingPrescriptions = $db->query("SELECT COUNT(*) FROM `prescriptions` WHERE `status` = 'Pending'")->fetchColumn();
+$todayRevenue = $db->query("SELECT COALESCE(SUM(`amount_paid`), 0) FROM `payments` WHERE DATE(`payment_datetime`) = CURDATE() AND hospital_id = {$hId}")->fetchColumn();
+$pendingLabs = $db->query("SELECT COUNT(*) FROM `lab_order_items` WHERE `item_status` IN ('Pending', 'Collected') AND hospital_id = {$hId}")->fetchColumn();
+$pendingPrescriptions = $db->query("SELECT COUNT(*) FROM `prescriptions` WHERE `status` = 'Pending' AND hospital_id = {$hId}")->fetchColumn();
 
 // 2. Fetch Today's Appointments & OPD Queue
 $todayQueue = $db->query("
@@ -24,7 +26,7 @@ $todayQueue = $db->query("
     JOIN `patients` p ON e.patient_id = p.id
     JOIN `users` u ON e.attending_doctor_id = u.id
     JOIN `departments` d ON e.department_id = d.id
-    WHERE e.encounter_status = 'In-Progress'
+    WHERE e.encounter_status = 'In-Progress' AND e.hospital_id = {$hId}
     ORDER BY e.admission_datetime DESC
     LIMIT 10
 ")->fetchAll();
@@ -38,6 +40,7 @@ $wardSummary = $db->query("
     FROM `wards` w
     LEFT JOIN `rooms` r ON w.id = r.ward_id
     LEFT JOIN `beds` b ON r.id = b.room_id
+    WHERE w.hospital_id = {$hId}
     GROUP BY w.id
 ")->fetchAll();
 
@@ -62,7 +65,7 @@ $pharmacyReviews = $db->query("
         ps.created_at AS sale_date,
         ps.payment_method,
         u.full_name AS pharmacist_name,
-        (SELECT COUNT(*) FROM `prescription_items` WHERE `prescription_id` = pr.id) AS total_prescribed_items,
+        (SELECT COUNT(*) FROM `prescription_items` WHERE `prescription_id` = pr.id) AS total_items,
         (SELECT GROUP_CONCAT(CONCAT(di.brand_name, ' (', pi.dosage, ')') SEPARATOR ', ')
          FROM `prescription_items` pi
          JOIN `drug_items` di ON pi.drug_item_id = di.id
@@ -78,6 +81,7 @@ $pharmacyReviews = $db->query("
     JOIN `users` doc ON pr.doctor_id = doc.id
     LEFT JOIN `pharmacy_sales` ps ON ps.prescription_id = pr.id
     LEFT JOIN `users` u ON ps.dispensed_by = u.id
+    WHERE pr.hospital_id = {$hId}
     ORDER BY pr.id DESC
     LIMIT 10
 ")->fetchAll(PDO::FETCH_ASSOC);
@@ -101,7 +105,7 @@ $posDrugBatches = $db->query("
         di.storage_condition
     FROM `drug_batches` db
     JOIN `drug_items` di ON db.drug_item_id = di.id
-    WHERE db.status = 'Active' AND db.current_quantity > 0 AND db.expiry_date > CURDATE()
+    WHERE db.status = 'Active' AND db.current_quantity > 0 AND db.expiry_date > CURDATE() AND db.hospital_id = {$hId}
     ORDER BY di.brand_name ASC, db.expiry_date ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -109,7 +113,7 @@ $posDrugBatches = $db->query("
 $posPatients = $db->query("
     SELECT p.id, p.mrn, p.first_name, p.last_name, p.phone_primary, p.gender, p.age
     FROM `patients` p
-    WHERE p.status = 'Active'
+    WHERE p.status = 'Active' AND p.hospital_id = {$hId}
     ORDER BY p.first_name ASC
     LIMIT 150
 ")->fetchAll(PDO::FETCH_ASSOC);

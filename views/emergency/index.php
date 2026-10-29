@@ -7,7 +7,9 @@ Auth::requireRole(['super_admin', 'hospital_admin', 'doctor', 'nurse', 'receptio
 
 $db = Database::getConnection();
 
-// Fetch Emergency statistics
+$hId = Tenant::id();
+
+// Fetch Emergency statistics for current hospital
 $statsQuery = $db->query("
     SELECT 
         COUNT(CASE WHEN encounter_status = 'In-Progress' THEN 1 END) as active_cases,
@@ -17,7 +19,7 @@ $statsQuery = $db->query("
         COUNT(CASE WHEN encounter_status = 'In-Progress' AND triage_level IN ('ESI-4', 'ESI-5') THEN 1 END) as non_critical_count,
         COUNT(CASE WHEN DATE(created_at) = CURDATE() AND encounter_status != 'In-Progress' THEN 1 END) as resolved_today
     FROM `encounters`
-    WHERE `encounter_type` = 'Emergency'
+    WHERE `encounter_type` = 'Emergency' AND hospital_id = {$hId}
 ");
 $stats = $statsQuery->fetch(PDO::FETCH_ASSOC);
 
@@ -43,10 +45,10 @@ $sql = "
             SELECT encounter_id, MAX(recorded_at) as max_rec FROM `clinical_vitals` GROUP BY encounter_id
         ) cv2 ON cv1.encounter_id = cv2.encounter_id AND cv1.recorded_at = cv2.max_rec
     ) v ON v.encounter_id = e.id
-    WHERE e.encounter_type = 'Emergency'
+    WHERE e.encounter_type = 'Emergency' AND e.hospital_id = ?
 ";
 
-$params = [];
+$params = [$hId];
 
 if (!empty($triageFilter)) {
     $sql .= " AND e.triage_level = ?";

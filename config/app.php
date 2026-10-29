@@ -17,45 +17,28 @@ define('BASE_URL', $baseUrl);
 
 define('APP_VERSION', '1.0.0');
 
-// Dynamic Hospital Profile Helper
-function hospital_profile(): array {
-    static $profile = null;
-    if ($profile === null) {
-        try {
-            require_once __DIR__ . '/database.php';
-            $db = Database::getConnection();
-            $stmt = $db->query("SELECT * FROM `hospital_profiles` ORDER BY id ASC LIMIT 1");
-            $data = $stmt->fetch();
-            if ($data) {
-                $profile = $data;
-            } else {
-                $profile = [
-                    'hospital_name' => 'Hayat Medicare Hospital',
-                    'tagline' => 'Excellence in Patient Care & Clinical Service',
-                    'emergency_hotline' => '091-1122334',
-                    'phone' => '+92 91 5892001',
-                    'email' => 'info@hayatmedicare.org',
-                    'address' => 'Sector B-3, Phase 5, Hayatabad',
-                    'city' => 'Peshawar',
-                    'currency_symbol' => 'PKR ',
-                    'default_tax_rate' => 0.00,
-                ];
-            }
-        } catch (Exception $e) {
-            $profile = [
-                'hospital_name' => 'Hospital Management System',
-                'tagline' => 'Healthcare Information System',
-                'emergency_hotline' => '1122',
-                'phone' => '',
-                'email' => '',
-                'address' => '',
-                'city' => '',
-                'currency_symbol' => 'PKR ',
-                'default_tax_rate' => 0.00,
-            ];
-        }
+// PHP 7.4 compatibility polyfills
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool {
+        return (string)$needle !== '' && strncmp($haystack, $needle, strlen($needle)) === 0;
     }
-    return $profile;
+}
+if (!function_exists('str_contains')) {
+    function str_contains(string $haystack, string $needle): bool {
+        return $needle === '' || strpos($haystack, $needle) !== false;
+    }
+}
+if (!function_exists('str_ends_with')) {
+    function str_ends_with(string $haystack, string $needle): bool {
+        return $needle === '' || substr($haystack, -strlen($needle)) === $needle;
+    }
+}
+
+// Dynamic Multi-Hospital Profile Helper
+require_once __DIR__ . '/../core/Tenant.php';
+
+function hospital_profile(?int $hospitalId = null): array {
+    return Tenant::profile($hospitalId);
 }
 
 $hp = hospital_profile();
@@ -126,35 +109,69 @@ function clean_input($data): string {
  */
 function generate_appointment_number(PDO $db, string $dateStr = ''): string {
     $datePrefix = !empty($dateStr) ? date('Ymd', strtotime($dateStr)) : date('Ymd');
+    $hProfile = Tenant::profile();
+    $prefix = !empty($hProfile['hospital_code']) ? $hProfile['hospital_code'] . '-APT' : 'APT';
+    
     $latestId = (int)$db->query("SELECT COALESCE(MAX(id), 0) FROM `appointments`")->fetchColumn();
     $seq = $latestId + 1;
-    $aptNum = 'APT-' . $datePrefix . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+    $aptNum = $prefix . '-' . $datePrefix . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
     
     $check = $db->prepare("SELECT COUNT(*) FROM `appointments` WHERE `appointment_number` = ?");
     $check->execute([$aptNum]);
     while ((int)$check->fetchColumn() > 0) {
         $seq++;
-        $aptNum = 'APT-' . $datePrefix . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+        $aptNum = $prefix . '-' . $datePrefix . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
         $check->execute([$aptNum]);
     }
     return $aptNum;
 }
 
 /**
- * Generate a guaranteed unique Patient MRN (e.g. MRN-2026-0003)
+ * Generate a guaranteed unique Patient MRN according to active Hospital configuration (e.g. MRN-2026-0003 or SIH-2026-0001)
  */
 function generate_patient_mrn(PDO $db): string {
-    $latestId = (int)$db->query("SELECT COALESCE(MAX(id), 0) FROM `patients`")->fetchColumn();
-    $seq = $latestId + 1;
-    $mrn = 'MRN-' . date('Y') . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+    $hProfile = Tenant::profile();
+    $prefix = !empty($hProfile['mrn_prefix']) ? $hProfile['mrn_prefix'] : 'MRN';
+    $hId = Tenant::id();
+    
+    // Count patients in current hospital
+    $stmt = $db->prepare("SELECT COALESCE(COUNT(*), 0) FROM `patients` WHERE hospital_id = ?");
+    $stmt->execute([$hId]);
+    $seq = (int)$stmt->fetchColumn() + 1;
+    
+    $mrn = $prefix . '-' . date('Y') . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
     
     $check = $db->prepare("SELECT COUNT(*) FROM `patients` WHERE `mrn` = ?");
     $check->execute([$mrn]);
     while ((int)$check->fetchColumn() > 0) {
         $seq++;
-        $mrn = 'MRN-' . date('Y') . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+        $mrn = $prefix . '-' . date('Y') . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
         $check->execute([$mrn]);
     }
     return $mrn;
+}
+
+/**
+ * Generate a guaranteed unique Invoice Number according to active Hospital configuration
+ */
+function generate_invoice_number(PDO $db): string {
+    $hProfile = Tenant::profile();
+    $prefix = !empty($hProfile['invoice_prefix']) ? $hProfile['invoice_prefix'] : 'INV';
+    $hId = Tenant::id();
+    
+    $stmt = $db->prepare("SELECT COALESCE(COUNT(*), 0) FROM `bills` WHERE hospital_id = ?");
+    $stmt->execute([$hId]);
+    $seq = (int)$stmt->fetchColumn() + 1;
+    
+    $invNum = $prefix . '-' . date('Ymd') . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+    
+    $check = $db->prepare("SELECT COUNT(*) FROM `bills` WHERE `bill_number` = ?");
+    $check->execute([$invNum]);
+    while ((int)$check->fetchColumn() > 0) {
+        $seq++;
+        $invNum = $prefix . '-' . date('Ymd') . '-' . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+        $check->execute([$invNum]);
+    }
+    return $invNum;
 }
 

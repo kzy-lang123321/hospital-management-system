@@ -1,10 +1,11 @@
 <?php
 /**
  * Hospital Management System (HMS)
- * Immutable Audit Logger Service
+ * Immutable Audit Logger Service - Multi-Hospital Aware
  */
 
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/Tenant.php';
 
 class AuditLogger {
     public static function log(string $eventType, string $tableName, $recordId = null, $oldValues = null, $newValues = null): void {
@@ -12,10 +13,11 @@ class AuditLogger {
             $db = Database::getConnection();
             $stmt = $db->prepare("
                 INSERT INTO `audit_logs` 
-                (`user_id`, `event_type`, `table_name`, `record_id`, `old_values`, `new_values`, `ip_address`, `user_agent`) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (`hospital_id`, `user_id`, `event_type`, `table_name`, `record_id`, `old_values`, `new_values`, `ip_address`, `user_agent`) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
 
+            $hospitalId = Tenant::id();
             $userId = $_SESSION['user']['id'] ?? null;
             $ipAddress = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
             $userAgent = substr($_SERVER['HTTP_USER_AGENT'] ?? 'CLI/Browser', 0, 250);
@@ -24,6 +26,7 @@ class AuditLogger {
             $newJson = $newValues !== null ? (is_string($newValues) ? $newValues : json_encode($newValues)) : null;
 
             $stmt->execute([
+                $hospitalId,
                 $userId,
                 $eventType,
                 $tableName,
@@ -34,7 +37,6 @@ class AuditLogger {
                 $userAgent
             ]);
         } catch (Exception $e) {
-            // Fail safely without halting clinical flow, write to standard error log
             error_log("HMS Audit Log Error: " . $e->getMessage());
         }
     }

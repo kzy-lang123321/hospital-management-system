@@ -9,7 +9,8 @@ $hProfile = hospital_profile();
 $selectedBillId = (int)($_GET['bill_id'] ?? 0);
 $search = trim($_GET['search'] ?? '');
 
-// Fetch All Bills with optional search filter
+// Fetch All Bills with optional search filter for current hospital
+$hId = Tenant::id();
 $billSql = "
     SELECT b.*, e.encounter_number, e.encounter_type,
            p.id AS patient_id, p.mrn, p.first_name, p.last_name, p.phone_primary,
@@ -18,12 +19,13 @@ $billSql = "
     JOIN `encounters` e ON b.encounter_id = e.id
     JOIN `patients` p ON b.patient_id = p.id
     JOIN `users` u ON b.created_by = u.id
+    WHERE b.hospital_id = ?
 ";
-$params = [];
+$params = [$hId];
 if (!empty($search)) {
-    $billSql .= " WHERE (b.bill_number LIKE ? OR p.mrn LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR p.phone_primary LIKE ?) ";
+    $billSql .= " AND (b.bill_number LIKE ? OR p.mrn LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR p.phone_primary LIKE ?) ";
     $term = "%$search%";
-    $params = [$term, $term, $term, $term, $term];
+    $params = array_merge($params, [$term, $term, $term, $term, $term]);
 }
 $billSql .= " ORDER BY b.id DESC";
 $stmt = $db->prepare($billSql);

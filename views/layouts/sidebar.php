@@ -20,7 +20,7 @@ function nav_active(string $pageName, string $currentPage): string {
     <!-- Brand / Hospital Identity -->
     <div class="h-16 flex items-center justify-between px-4 bg-navy-900 border-b border-slate-800 gap-3">
         <div class="flex items-center gap-3 overflow-hidden">
-            <div class="w-10 h-10 rounded-lg bg-medical-600 flex items-center justify-center text-white font-bold text-xl shadow-md flex-shrink-0">
+            <div class="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-md flex-shrink-0" style="background-color: <?= htmlspecialchars($hProfile['theme_color'] ?? '#0d9488') ?>;">
                 <i class="fa-solid fa-house-chimney-medical"></i>
             </div>
             <div class="leading-tight overflow-hidden">
@@ -36,6 +36,23 @@ function nav_active(string $pageName, string $currentPage): string {
 
     <!-- Navigation Links -->
     <div class="flex-1 overflow-y-auto custom-scrollbar py-4 px-3 space-y-6">
+
+        <!-- Platform Super Admin Console (When authorized) -->
+        <?php if (Auth::isPlatformAdmin()): ?>
+        <div class="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-800/60 space-y-1">
+            <div class="text-[10px] font-bold text-indigo-300 uppercase tracking-wider px-2 flex items-center gap-1.5 mb-1.5">
+                <i class="fa-solid fa-server"></i> Platform Control
+            </div>
+            <a href="index.php?page=platform_dashboard" class="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all <?= nav_active('platform_dashboard', $currentPage) ?>">
+                <i class="fa-solid fa-chart-pie w-4 text-center text-indigo-400"></i>
+                <span>Platform Metrics</span>
+            </a>
+            <a href="index.php?page=platform_hospitals" class="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all <?= nav_active('platform_hospitals', $currentPage) ?>">
+                <i class="fa-solid fa-hospital-user w-4 text-center text-indigo-400"></i>
+                <span>Hospital Facilities</span>
+            </a>
+        </div>
+        <?php endif; ?>
         
         <!-- Main Workspaces -->
         <div>
@@ -158,13 +175,17 @@ function nav_active(string $pageName, string $currentPage): string {
             </nav>
         </div>
 
-        <!-- Administration -->
-        <?php if (Auth::hasRole(['super_admin', 'hospital_admin'])): ?>
+        <!-- Administration & Facility Customization -->
+        <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'hospital_owner', 'platform_admin'])): ?>
         <div>
-            <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">Administration</div>
+            <div class="text-[11px] font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">Hospital Administration</div>
             <nav class="space-y-1">
+                <a href="index.php?page=hospital_customization" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('hospital_customization', $currentPage) ?>">
+                    <i class="fa-solid fa-sliders w-5 text-center text-teal-400"></i>
+                    <span>Hospital Customization</span>
+                </a>
                 <a href="index.php?page=settings" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('settings', $currentPage) ?>">
-                    <i class="fa-solid fa-sliders w-5 text-center"></i>
+                    <i class="fa-solid fa-gears w-5 text-center"></i>
                     <span>Hospital Masters</span>
                 </a>
                 <a href="index.php?page=users" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('users', $currentPage) ?>">
