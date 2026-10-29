@@ -4,7 +4,28 @@
  * Application Core Configuration & Global Helpers
  */
 
+// Multi-Instance / Serverless-Safe Session Initialization
 if (session_status() === PHP_SESSION_NONE) {
+    ini_set('session.cookie_httponly', '1');
+    ini_set('session.use_only_cookies', '1');
+    ini_set('session.cookie_path', '/');
+    ini_set('session.cookie_samesite', 'Lax');
+
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
+               (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+    if ($isHttps) {
+        ini_set('session.cookie_secure', '1');
+    }
+
+    require_once __DIR__ . '/database.php';
+    require_once __DIR__ . '/../core/SessionHandler.php';
+    try {
+        $sessionPdo = Database::getConnection();
+        DatabaseSessionHandler::register($sessionPdo);
+    } catch (Exception $e) {
+        // Fallback to default file session if DB fails
+    }
+
     session_start();
 }
 
@@ -45,13 +66,30 @@ $hp = hospital_profile();
 define('APP_NAME', $hp['hospital_name']);
 define('CURRENCY', $hp['currency_symbol'] ?? 'PKR ');
 
-// Security & CSRF
+// Security & CSRF (Double-Submit Cookie + Serverless Database-Session Sync)
 if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    if (!empty($_COOKIE['csrf_token']) && preg_match('/^[a-f0-9]{32,64}$/i', $_COOKIE['csrf_token'])) {
+        $_SESSION['csrf_token'] = $_COOKIE['csrf_token'];
+    } else {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+}
+
+// Sync Cookie with Session
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
+           (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+if (!headers_sent() && (empty($_COOKIE['csrf_token']) || $_COOKIE['csrf_token'] !== $_SESSION['csrf_token'])) {
+    setcookie('csrf_token', $_SESSION['csrf_token'], [
+        'expires' => time() + 86400 * 7,
+        'path' => '/',
+        'secure' => $isHttps,
+        'httponly' => false,
+        'samesite' => 'Lax'
+    ]);
 }
 
 function csrf_token(): string {
-    return $_SESSION['csrf_token'] ?? '';
+    return $_SESSION['csrf_token'] ?? $_COOKIE['csrf_token'] ?? '';
 }
 
 function csrf_field(): string {
@@ -61,8 +99,24 @@ function csrf_field(): string {
 function verify_csrf(): bool {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $token = $_POST['csrf_token'] ?? '';
-        if (!hash_equals($_SESSION['csrf_token'] ?? '', $token)) {
-            die("<div style='font-family:sans-serif;padding:2rem;color:red;'><h2>Security Exception</h2><p>Invalid or expired CSRF token. Please refresh the page and try again.</p></div>");
+        $sessionToken = $_SESSION['csrf_token'] ?? '';
+        $cookieToken = $_COOKIE['csrf_token'] ?? '';
+
+        $isValid = false;
+        if (!empty($token)) {
+            if (!empty($sessionToken) && hash_equals($sessionToken, $token)) {
+                $isValid = true;
+            } elseif (!empty($cookieToken) && hash_equals($cookieToken, $token)) {
+                $isValid = true;
+                $_SESSION['csrf_token'] = $cookieToken;
+            }
+        }
+
+        if (!$isValid) {
+            set_flash('danger', 'Your session or security token expired. Please try again.');
+            $redirectUrl = $_SERVER['HTTP_REFERER'] ?? 'index.php?page=login';
+            header("Location: $redirectUrl");
+            exit;
         }
     }
     return true;
