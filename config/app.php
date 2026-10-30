@@ -4,17 +4,25 @@
  * Application Core Configuration & Global Helpers
  */
 
+// Suppress notices/deprecations from polluting HTTP headers before session_start()
+if (!headers_sent()) {
+    ini_set('display_errors', '0');
+    error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE & ~E_WARNING);
+}
+
 // Multi-Instance / Serverless-Safe Session Initialization
 if (session_status() === PHP_SESSION_NONE) {
-    ini_set('session.cookie_httponly', '1');
-    ini_set('session.use_only_cookies', '1');
-    ini_set('session.cookie_path', '/');
-    ini_set('session.cookie_samesite', 'Lax');
+    if (!headers_sent()) {
+        ini_set('session.cookie_httponly', '1');
+        ini_set('session.use_only_cookies', '1');
+        ini_set('session.cookie_path', '/');
+        ini_set('session.cookie_samesite', 'Lax');
 
-    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
-               (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
-    if ($isHttps) {
-        ini_set('session.cookie_secure', '1');
+        $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
+                   (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+        if ($isHttps) {
+            ini_set('session.cookie_secure', '1');
+        }
     }
 
     require_once __DIR__ . '/database.php';
@@ -26,7 +34,9 @@ if (session_status() === PHP_SESSION_NONE) {
         // Fallback to default file session if DB fails
     }
 
-    session_start();
+    if (!headers_sent() && session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
 }
 
 date_default_timezone_set('Asia/Karachi');
