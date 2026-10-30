@@ -27,6 +27,7 @@ $hProfile = hospital_profile();
                     type="text" 
                     name="search" 
                     id="globalPatientSearch"
+                    aria-label="Search patients by MRN, full name, phone or CNIC"
                     placeholder="Search Patient by MRN, Name, Phone, CNIC... (Ctrl + /)" 
                     class="w-full pl-9 pr-14 py-2 bg-slate-100 hover:bg-slate-50 focus:bg-white text-xs border border-slate-200 focus:border-medical-500 focus:ring-1 focus:ring-medical-500 rounded-lg outline-none transition-all"
                 >
@@ -56,6 +57,10 @@ $hProfile = hospital_profile();
         </div>
         <?php endif; ?>
 
+        <button type="button" id="workspaceOpen" class="workspace-tool" aria-haspopup="dialog" aria-controls="workspaceDialog" title="Find a workspace (Ctrl+K)">
+            <i class="fa-solid fa-compass" aria-hidden="true"></i> <span class="workspace-tool-label">Workspaces <kbd>Ctrl K</kbd></span>
+        </button>
+        <button type="button" id="workspaceReadable" class="workspace-tool" aria-pressed="false" title="Toggle larger text and roomier tables" aria-label="Larger text and roomier tables">Aa</button>
         <!-- Role Badge & Hospital Context Switcher -->
         <div class="flex items-center gap-2 sm:border-l sm:border-slate-200 sm:pl-4">
             <?php if (Auth::isPlatformAdmin()): ?>

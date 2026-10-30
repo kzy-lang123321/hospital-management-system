@@ -33,13 +33,15 @@ $flash = get_flash();
         </button>
     </div>
     <script>
+        <?php if ($flash['type'] === 'success' || $flash['type'] === 'info'): ?>
         setTimeout(() => {
             const toast = document.getElementById('flashToast');
             if (toast) {
                 toast.classList.add('opacity-0', 'translate-y-4');
                 setTimeout(() => toast.remove(), 300);
             }
-        }, 5000);
+        }, 8000);
+        <?php endif; ?>
     </script>
     <?php endif; ?>
 
@@ -99,5 +101,10 @@ $flash = get_flash();
             }
         });
     </script>
+<dialog id="workspaceDialog" class="workspace-dialog no-print" aria-labelledby="workspaceDialogTitle">
+    <div class="workspace-dialog-head"><div><h2 id="workspaceDialogTitle">Find your workspace</h2><p class="workspace-caption">Jump straight to the task you need.</p></div><button type="button" id="workspaceClose" class="workspace-tool" aria-label="Close workspace finder">&times;</button></div>
+    <div class="workspace-dialog-body"><label for="workspaceQuery" class="sr-only">Filter workspaces</label><input type="search" id="workspaceQuery" placeholder="Type a workspace name..." autocomplete="off"><p id="workspaceCount" class="workspace-caption" role="status"></p><nav id="workspaceResults" aria-label="Workspace search results"></nav><p class="workspace-caption">Use arrow keys to browse, Enter to open, and Esc to close.</p></div>
+</dialog>
+<script><?php readfile(__DIR__ . '/../../assets/workspace.js'); ?></script>
 </body>
 </html>

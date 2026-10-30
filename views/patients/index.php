@@ -8,6 +8,8 @@ $db = Database::getConnection();
 $search = clean_input($_GET['search'] ?? '');
 $genderFilter = clean_input($_GET['gender'] ?? '');
 $bloodFilter = clean_input($_GET['blood_group'] ?? '');
+$directoryPage = max(1, (int)($_GET['directory_page'] ?? 1));
+$pageSize = 25;
 
 $hId = Tenant::id();
 $query = "SELECT p.*, 
@@ -18,9 +20,9 @@ $query = "SELECT p.*,
 $params = [$hId];
 
 if ($search !== '') {
-    $query .= " AND (p.mrn LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR p.phone_primary LIKE ? OR p.national_id LIKE ?)";
+    $query .= " AND (p.mrn LIKE ? OR p.first_name LIKE ? OR p.last_name LIKE ? OR CONCAT_WS(' ', p.first_name, p.last_name) LIKE ? OR p.phone_primary LIKE ? OR p.national_id LIKE ?)";
     $like = "%$search%";
-    $params = array_merge($params, [$like, $like, $like, $like, $like]);
+    $params = array_merge($params, [$like, $like, $like, $like, $like, $like]);
 }
 
 if ($genderFilter !== '') {
@@ -33,7 +35,18 @@ if ($bloodFilter !== '') {
     $params[] = $bloodFilter;
 }
 
-$query .= " ORDER BY p.id DESC LIMIT 50";
+// Count using the same hospital scope and filters as the displayed records.
+$countQuery = 'SELECT COUNT(*) FROM `patients` p ' . substr($query, strpos($query, 'WHERE p.hospital_id'));
+$countStmt = $db->prepare($countQuery);
+$countStmt->execute($params);
+$matchingPatients = (int)$countStmt->fetchColumn();
+$pageCount = max(1, (int)ceil($matchingPatients / $pageSize));
+$directoryPage = min($directoryPage, $pageCount);
+$offset = ($directoryPage - 1) * $pageSize;
+$query .= " ORDER BY p.id DESC LIMIT {$pageSize} OFFSET {$offset}";
+$directoryUrl = static function (int $number) use ($search, $genderFilter, $bloodFilter): string {
+    return 'index.php?' . http_build_query(['page' => 'patients', 'search' => $search, 'gender' => $genderFilter, 'blood_group' => $bloodFilter, 'directory_page' => $number]);
+};
 $stmt = $db->prepare($query);
 $stmt->execute($params);
 $patients = $stmt->fetchAll();
@@ -162,6 +175,13 @@ $patients = $stmt->fetchAll();
                     <?php endif; ?>
                 </tbody>
             </table>
+        </div>
+        <div class="workspace-pager">
+            <p role="status"><?= $matchingPatients ? $offset + 1 : 0 ?>&ndash;<?= min($offset + $pageSize, $matchingPatients) ?> of <?= number_format($matchingPatients) ?> patients <span class="text-slate-500">&middot; Page <?= $directoryPage ?> of <?= $pageCount ?></span></p>
+            <nav aria-label="Patient directory pages">
+                <?php if ($directoryPage > 1): ?><a class="workspace-tool" href="<?= htmlspecialchars($directoryUrl($directoryPage - 1)) ?>">&larr; Previous</a><?php endif; ?>
+                <?php if ($directoryPage < $pageCount): ?><a class="workspace-tool" href="<?= htmlspecialchars($directoryUrl($directoryPage + 1)) ?>">Next &rarr;</a><?php endif; ?>
+            </nav>
         </div>
     </div>
 

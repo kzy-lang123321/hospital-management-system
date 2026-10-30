@@ -153,5 +153,7 @@ $hProfile = hospital_profile();
             }
         }
     </style>
+    <style><?php readfile(__DIR__ . '/../../assets/workspace.css'); ?></style>
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased flex h-screen overflow-hidden">
+<a href="#workspaceContent" class="workspace-skip no-print">Skip to workspace</a>

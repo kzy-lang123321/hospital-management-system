@@ -123,6 +123,14 @@ $completedTokensToday = count(array_filter($todayAppointments, fn($a) => $a['sta
 
 <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
 
+    <section class="workspace-actions no-print" aria-label="Daily tasks">
+        <strong><i class="fa-solid fa-sun" aria-hidden="true"></i> Your working day <span class="font-normal">&middot; <?= date('D, j M') ?></span></strong>
+        <?php foreach (['patient_create' => 'Register patient', 'appointments' => 'Appointments', 'opd_consultation' => 'Consultations', 'laboratory' => 'Laboratory', 'pharmacy' => 'Pharmacy', 'billing' => 'Billing'] as $shortcut => $label): ?>
+            <?php if (isset($routes[$shortcut]) && (empty($routes[$shortcut]['roles']) || Auth::hasRole($routes[$shortcut]['roles']))): ?>
+                <a href="index.php?page=<?= $shortcut ?>"><?= $label ?></a>
+            <?php endif; ?>
+        <?php endforeach; ?>
+    </section>
     <!-- Top Banner / Clinical Context -->
     <div class="bg-gradient-to-r from-navy-900 via-navy-800 to-medical-900 text-white rounded-2xl p-6 shadow-md relative overflow-hidden">
         <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
