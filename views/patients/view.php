@@ -138,6 +138,10 @@ $bills = $billsStmt->fetchAll();
 
             <!-- Quick Action Hotbuttons for This Patient -->
             <div class="flex flex-wrap items-center gap-2 self-start md:self-center">
+                <a href="index.php?page=print_token&patient_id=<?= $patient['id'] ?>&autoprint=1" target="_blank" class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5">
+                    <i class="fa-solid fa-qrcode text-indigo-600"></i>
+                    <span>Print OPD Token (QR)</span>
+                </a>
                 <button onclick="document.getElementById('patientCardModal').classList.remove('hidden')" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5">
                     <i class="fa-solid fa-id-card text-slate-500"></i>
                     <span>Print Patient Card / Slip</span>

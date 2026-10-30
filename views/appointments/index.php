@@ -172,21 +172,10 @@ $appointments = $stmt->fetchAll();
                                 </span>
                             </td>
                             <td class="px-6 py-3.5 text-right flex items-center justify-end gap-2">
-                                <button type="button" onclick='openTokenSlip(<?= htmlspecialchars(json_encode([
-                                    "apt_number" => $apt["appointment_number"],
-                                    "token_number" => $apt["token_number"],
-                                    "patient_name" => $apt["first_name"] . " " . $apt["last_name"],
-                                    "mrn" => $apt["mrn"],
-                                    "phone" => $apt["phone_primary"],
-                                    "doctor_name" => $apt["doctor_name"],
-                                    "department" => $apt["department_name"],
-                                    "fee" => format_currency($apt["consultation_fee"]),
-                                    "date" => format_date($apt["appointment_date"]),
-                                    "time" => date("h:i A", strtotime($apt["slot_time"]))
-                                ]), ENT_QUOTES, "UTF-8") ?>)' class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-semibold transition-colors flex items-center gap-1" title="Print Token Slip">
-                                    <i class="fa-solid fa-print text-[10px]"></i>
-                                    <span>Slip</span>
-                                </button>
+                                <a href="index.php?page=print_token&apt_id=<?= $apt['id'] ?>&autoprint=1" target="_blank" class="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded text-xs font-bold transition-colors flex items-center gap-1" title="Print Dedicated Token Receipt with Scannable QR Code">
+                                    <i class="fa-solid fa-qrcode text-[10px]"></i>
+                                    <span>Print Token (QR)</span>
+                                </a>
                                 <?php if ($apt['status'] !== 'Completed' && $apt['status'] !== 'Checked-In'): ?>
                                 <a href="index.php?action=appointment_checkin&id=<?= $apt['id'] ?>" class="px-3 py-1 bg-medical-600 hover:bg-medical-700 text-white rounded text-xs font-semibold transition-colors">
                                     Check In

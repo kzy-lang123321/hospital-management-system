@@ -4,6 +4,10 @@
  * Application Core Configuration & Global Helpers
  */
 
+if (!ob_get_level()) {
+    ob_start();
+}
+
 // Suppress notices/deprecations from polluting HTTP headers before session_start()
 if (!headers_sent()) {
     ini_set('display_errors', '0');

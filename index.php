@@ -731,10 +731,7 @@ if ($action !== null) {
             $db->commit();
 
             set_flash('success', "Patient record registered successfully with unique MRN: $mrn" . ($newAptId > 0 ? " and booked for consultation." : ""));
-            $redirectUrl = "index.php?page=patient_profile&id=" . $newPatientId . "&registered=1";
-            if ($newAptId > 0) {
-                $redirectUrl .= "&apt_id=" . $newAptId;
-            }
+            $redirectUrl = "index.php?page=print_token&patient_id=" . $newPatientId . ($newAptId > 0 ? "&apt_id=" . $newAptId : "") . "&autoprint=1";
             header("Location: " . $redirectUrl);
             exit;
         } catch (Exception $e) {
@@ -779,7 +776,7 @@ if ($action !== null) {
         $newAptId = (int)$db->lastInsertId();
         AuditLogger::log('CREATE', 'appointments', $newAptId, null, ['apt_number' => $aptNum]);
         set_flash('success', "Appointment booked successfully with Token #$tokenNumber ($aptNum).");
-        header("Location: index.php?page=appointments&date=" . $appointmentDate . "&print_token=" . $newAptId);
+        header("Location: index.php?page=print_token&apt_id=" . $newAptId . "&autoprint=1");
         exit;
     }
 
@@ -3108,6 +3105,18 @@ if ($page === 'print_credentials') {
 if ($page === 'print_pos_receipt') {
     Auth::requireLogin();
     require_once __DIR__ . '/views/pos/print_receipt.php';
+    exit;
+}
+
+if ($page === 'print_token') {
+    Auth::requireLogin();
+    require_once __DIR__ . '/views/reception/print_token.php';
+    exit;
+}
+
+if ($page === 'print_lab_receipt') {
+    Auth::requireLogin();
+    require_once __DIR__ . '/views/laboratory/print_receipt.php';
     exit;
 }
 

@@ -132,7 +132,12 @@ if ($selectedItemId > 0) {
                         </div>
                         <div class="flex items-center justify-between text-[10px] text-slate-400 mt-2 font-mono">
                             <span>Barcode: <?= htmlspecialchars($item['sample_barcode'] ?? 'Unassigned') ?></span>
-                            <span><?= date('d M, h:i A', strtotime($item['order_datetime'])) ?></span>
+                            <div class="flex items-center gap-2">
+                                <span><?= date('d M, h:i A', strtotime($item['order_datetime'])) ?></span>
+                                <a href="index.php?page=print_lab_receipt&order_id=<?= (int)($item['lab_order_id'] ?? $item['id']) ?>&autoprint=1" target="_blank" onclick="event.stopPropagation();" title="Print Dedicated Lab Receipt" class="text-indigo-600 hover:text-indigo-800 font-sans font-bold text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 border border-indigo-200">
+                                    <i class="fa-solid fa-receipt mr-0.5"></i> Receipt
+                                </a>
+                            </div>
                         </div>
                     </a>
                     <?php endforeach; ?>
@@ -170,6 +175,10 @@ if ($selectedItemId > 0) {
                         </div>
 
                         <div class="flex items-center gap-2">
+                            <a href="index.php?page=print_lab_receipt&order_id=<?= $selectedItem['lab_order_id'] ?>&autoprint=1" target="_blank" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors">
+                                <i class="fa-solid fa-receipt text-[11px]"></i>
+                                <span>Print Lab Receipt</span>
+                            </a>
                             <?php if ($selectedItem['item_status'] === 'Verified' || !empty($existingResults)): ?>
                             <button type="button" onclick="document.getElementById('labReportModal').classList.remove('hidden')" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold shadow-sm flex items-center gap-1.5 transition-colors">
                                 <i class="fa-solid fa-print text-[11px]"></i>
