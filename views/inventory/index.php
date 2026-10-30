@@ -86,7 +86,7 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
                     </span>
                     <h1 class="text-2xl font-bold text-slate-800">Central Inventory & Procurement</h1>
                 </div>
-                <p class="text-sm text-slate-500 mt-1">Pharmaceuticals, Narcotics (Schedule II/IV), Surgical Disposables, Cold-Chain & Expiry Tracking.</p>
+                <p class="text-sm text-slate-500 mt-1">General Medical Supplies, Surgical Disposables, Non-Pharmaceutical Assets &amp; Central Procurement.</p>
             </div>
 
             <div class="flex items-center gap-2">
@@ -98,10 +98,36 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
                     <i class="fa-solid fa-cart-shopping text-medical-600"></i>
                     <span>Generate PO</span>
                 </button>
-                <button onclick="document.getElementById('modal-add-item').classList.remove('hidden')" class="btn-primary bg-amber-600 hover:bg-amber-700 text-white text-xs flex items-center gap-1.5 font-semibold">
+                <button onclick="document.getElementById('modal-add-item').classList.remove('hidden')" class="btn-primary bg-amber-600 hover:bg-amber-700 text-white text-xs flex items-center gap-1.5 font-semibold" title="Add general non-pharmaceutical hospital supplies">
                     <i class="fa-solid fa-box-archive"></i>
-                    <span>Add Stock Item</span>
+                    <span>Add General Supply</span>
                 </button>
+            </div>
+        </div>
+
+        <!-- Pharmacy Exclusivity Governance Notice -->
+        <div class="bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-teal-600 text-white flex items-center justify-center text-base flex-shrink-0">
+                    <i class="fa-solid fa-pills"></i>
+                </div>
+                <div>
+                    <div class="text-xs font-bold text-teal-900 uppercase tracking-wide flex items-center gap-2">
+                        <span>Pharmacy Stock Isolation Policy</span>
+                        <span class="px-2 py-0.2 bg-teal-200 text-teal-900 rounded text-[9px] font-black uppercase">Pharmacy Exclusive</span>
+                    </div>
+                    <p class="text-xs text-teal-700 mt-0.5">Medicine, pharmaceutical, and narcotic stock entries are restricted exclusively to the <strong>Pharmacy Module</strong> with FEFO batch &amp; bulk receiving controls.</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <a href="index.php?page=pharmacy&tab=stock" class="px-3 py-1.5 bg-white hover:bg-teal-50 text-teal-800 border border-teal-300 rounded-lg text-xs font-bold shadow-2xs transition-colors flex items-center gap-1.5">
+                    <i class="fa-solid fa-boxes-stacked text-teal-600"></i>
+                    <span>Pharmacy Stock</span>
+                </a>
+                <a href="index.php?page=pharmacy&tab=bulk_entry" class="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold shadow-2xs transition-colors flex items-center gap-1.5">
+                    <i class="fa-solid fa-table-cells"></i>
+                    <span>Bulk Medicine Entry</span>
+                </a>
             </div>
         </div>
 
@@ -420,17 +446,28 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
     </div>
 </main>
 
-<!-- MODAL: ADD INVENTORY / PHARMACEUTICAL ITEM -->
+<!-- MODAL: ADD GENERAL NON-PHARMACEUTICAL SUPPLY ITEM -->
 <div id="modal-add-item" class="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center hidden p-4 overflow-x-hidden">
     <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
         <div class="px-6 py-4 bg-amber-600 text-white flex items-center justify-between flex-shrink-0">
             <div>
-                <h3 class="font-bold text-base">Register Medicine / Stock Consumable</h3>
-                <p class="text-xs text-amber-100">Supports regular drugs, controlled substances (narcotics), batches, and expiry dates.</p>
+                <h3 class="font-bold text-base">Register General Supply / Store Consumable</h3>
+                <p class="text-xs text-amber-100">For surgical disposables, PPE, instruments &amp; hospital stores.</p>
             </div>
             <button type="button" onclick="document.getElementById('modal-add-item').classList.add('hidden')" class="text-white/80 hover:text-white text-lg">
                 <i class="fa-solid fa-xmark"></i>
             </button>
+        </div>
+
+        <!-- Medicine Exclusive Redirect Banner -->
+        <div class="bg-teal-50 border-b border-teal-200 px-6 py-3 flex items-center justify-between gap-3 text-xs text-teal-900">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-pills text-teal-600 text-sm"></i>
+                <span><strong>Adding Medicines or Drugs?</strong> Medicine stock entries must be recorded via the Pharmacy Module.</span>
+            </div>
+            <a href="index.php?page=pharmacy&tab=bulk_entry" class="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-lg text-[11px] shadow-2xs whitespace-nowrap">
+                Go to Pharmacy &rarr;
+            </a>
         </div>
 
         <form method="POST" action="index.php?action=inventory_item_store" class="p-6 space-y-4 overflow-y-auto overflow-x-hidden custom-scrollbar flex-1">
@@ -438,19 +475,19 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div class="min-w-0">
-                    <label class="form-label text-xs">Item / Brand Name <span class="text-red-500">*</span></label>
-                    <input type="text" name="item_name" required placeholder="e.g. Morphine Sulfate 10mg / Augmentin 625mg" class="form-input text-xs font-semibold">
+                    <label class="form-label text-xs">Supply Item Name <span class="text-red-500">*</span></label>
+                    <input type="text" name="item_name" required placeholder="e.g. Sterile Surgical Gloves 7.5 / IV Cannula 20G" class="form-input text-xs font-semibold">
                 </div>
                 <div class="min-w-0">
-                    <label class="form-label text-xs">Generic Formula</label>
-                    <input type="text" name="generic_name" placeholder="e.g. Morphine Sulfate / Amoxicillin + Clav" class="form-input text-xs">
+                    <label class="form-label text-xs">Specification / Material</label>
+                    <input type="text" name="generic_name" placeholder="e.g. Latex Powder-Free / Teflon Catheter" class="form-input text-xs">
                 </div>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div class="min-w-0">
                     <label class="form-label text-xs">Item Code <span class="text-red-500">*</span></label>
-                    <input type="text" name="item_code" required placeholder="e.g. MED-MOR-10" class="form-input text-xs font-mono">
+                    <input type="text" name="item_code" required placeholder="e.g. SUR-GLV-75" class="form-input text-xs font-mono">
                 </div>
                 <div class="min-w-0">
                     <label class="form-label text-xs">Category <span class="text-red-500">*</span></label>
@@ -462,18 +499,13 @@ $allSuppliers = $db->query("SELECT * FROM `suppliers` ORDER BY id DESC")->fetchA
                     </select>
                 </div>
                 <div class="min-w-0">
-                    <label class="form-label text-xs">Dosage Form <span class="text-red-500">*</span></label>
+                    <label class="form-label text-xs">Item Type / Form <span class="text-red-500">*</span></label>
                     <select name="dosage_form" required class="form-input text-xs">
-                        <option value="Tablets">Tablets</option>
-                        <option value="Capsules">Capsules</option>
-                        <option value="Injection">Injection (Ampoule/Vial)</option>
-                        <option value="Infusion">IV Infusion / Fluid</option>
-                        <option value="Syrup">Syrup / Suspension</option>
-                        <option value="Inhaler">Inhaler / Respule</option>
-                        <option value="Ointment">Ointment / Gel</option>
-                        <option value="Eye_Drops">Eye / Ear Drops</option>
                         <option value="Surgical Disposable">Surgical Disposable</option>
+                        <option value="PPE / Protective Equipment">PPE / Protective Equipment</option>
                         <option value="Diagnostic Reagent">Diagnostic Reagent</option>
+                        <option value="Biomedical Supply">Biomedical Supply</option>
+                        <option value="General Store Consumable">General Store Consumable</option>
                     </select>
                 </div>
             </div>

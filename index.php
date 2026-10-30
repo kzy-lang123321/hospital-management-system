@@ -2179,36 +2179,44 @@ if ($action !== null) {
         exit;
     }
 
-    // Inventory Item Store Action
+    // Inventory Item Store Action (Restricted to General Hospital Supplies / Consumables)
     if ($action === 'inventory_item_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         verify_csrf();
-        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist']);
+        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist', 'hospital_owner', 'platform_admin']);
 
         $name = clean_input($_POST['item_name'] ?? '');
         $genericName = clean_input($_POST['generic_name'] ?? '');
-        $dosageForm = clean_input($_POST['dosage_form'] ?? 'Tablets');
+        $dosageForm = clean_input($_POST['dosage_form'] ?? 'Supply');
         $code = clean_input($_POST['item_code'] ?? '');
         $catId = (int)($_POST['category_id'] ?? 1);
-        $uom = clean_input($_POST['unit_of_measure'] ?? 'Pack');
+        $uom = clean_input($_POST['unit_of_measure'] ?? 'Piece');
         $stock = (int)($_POST['current_stock'] ?? 0);
         $reorder = (int)($_POST['reorder_level'] ?? 20);
         $cost = (float)($_POST['unit_cost_price'] ?? 0.00);
         $salePrice = (float)($_POST['unit_sale_price'] ?? 0.00);
         $isNarcotic = !empty($_POST['is_narcotic']) ? 1 : 0;
         $narcoticSchedule = !empty($_POST['narcotic_schedule']) ? clean_input($_POST['narcotic_schedule']) : null;
-        $storageCondition = clean_input($_POST['storage_condition'] ?? 'Room Temperature (15-25°C)');
+        $storageCondition = clean_input($_POST['storage_condition'] ?? 'Room Temperature');
         $batchNumber = clean_input($_POST['batch_number'] ?? '');
         $expiryDate = !empty($_POST['expiry_date']) ? clean_input($_POST['expiry_date']) : null;
 
+        // Strict Policy Enforcement: Medicine & pharmaceutical stock entries are ONLY allowed in Pharmacy
+        $medicineForms = ['Tablet', 'Tablets', 'Capsule', 'Capsules', 'Syrup', 'Syrups', 'Injection', 'Injections', 'Infusion', 'Infusions', 'Eye_Drops', 'Inhaler', 'Inhalers'];
+        if ($isNarcotic || in_array($dosageForm, $medicineForms)) {
+            set_flash('warning', "Medicine & Pharmaceutical stock entries are restricted exclusively to the Pharmacy Module. Please record medicines via Pharmacy Stock Entry.");
+            header("Location: index.php?page=pharmacy&tab=stock");
+            exit;
+        }
+
         $stmt = $db->prepare("
             INSERT INTO `inventory_items` 
-            (`category_id`, `item_name`, `generic_name`, `dosage_form`, `is_narcotic`, `narcotic_schedule`, `storage_condition`, `batch_number`, `expiry_date`, `item_code`, `unit_of_measure`, `current_stock`, `reorder_level`, `unit_cost_price`, `unit_sale_price`)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (`category_id`, `item_name`, `generic_name`, `dosage_form`, `is_narcotic`, `narcotic_schedule`, `storage_condition`, `batch_number`, `expiry_date`, `item_code`, `unit_of_measure`, `current_stock`, `reorder_level`, `unit_cost_price`, `unit_sale_price`, `hospital_id`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
-        $stmt->execute([$catId, $name, $genericName, $dosageForm, $isNarcotic, $narcoticSchedule, $storageCondition, $batchNumber, $expiryDate, $code, $uom, $stock, $reorder, $cost, $salePrice]);
+        $stmt->execute([$catId, $name, $genericName, $dosageForm, $isNarcotic, $narcoticSchedule, $storageCondition, $batchNumber, $expiryDate, $code, $uom, $stock, $reorder, $cost, $salePrice, Tenant::id()]);
 
-        AuditLogger::log('CREATE', 'inventory_items', $db->lastInsertId(), null, ['name' => $name, 'code' => $code, 'is_narcotic' => $isNarcotic]);
-        set_flash('success', "Item '$name' ($code) added to inventory catalog with batch tracking.");
+        AuditLogger::log('CREATE', 'inventory_items', $db->lastInsertId(), null, ['name' => $name, 'code' => $code]);
+        set_flash('success', "Supply item '$name' ($code) added to central inventory.");
         header("Location: index.php?page=inventory&tab=stock");
         exit;
     }
@@ -2815,14 +2823,232 @@ if ($action !== null) {
 
             $db->commit();
 
-            set_flash('success', "POS Sale $saleInvoiceNum completed successfully! Total: Rs. " . number_format($netTotal, 2));
-            header("Location: index.php?page=dashboard&pos_sale_id=" . $saleId . "#dashboard-pos");
+            $source = clean_input($_POST['source'] ?? 'pharmacy');
+            $redirectTarget = ($source === 'dashboard') 
+                ? "index.php?page=dashboard&pos_sale_id={$saleId}#dashboard-pos"
+                : "index.php?page=pharmacy&tab=dispensary&pos_sale_id={$saleId}";
+
+            set_flash('success', "Out-Patient Dispensary Sale $saleInvoiceNum completed successfully! Total: Rs. " . number_format($netTotal, 2));
+            header("Location: $redirectTarget");
             exit;
 
         } catch (Exception $e) {
             $db->rollBack();
-            set_flash('danger', "POS Transaction Failed: " . $e->getMessage());
-            header("Location: index.php?page=dashboard#dashboard-pos");
+            $source = clean_input($_POST['source'] ?? 'pharmacy');
+            $redirectTarget = ($source === 'dashboard') 
+                ? "index.php?page=dashboard#dashboard-pos"
+                : "index.php?page=pharmacy&tab=dispensary";
+
+            set_flash('danger', "Dispensary Checkout Failed: " . $e->getMessage());
+            header("Location: $redirectTarget");
+            exit;
+        }
+    }
+
+    // 13. Pharmacy Single Medicine Stock Entry Action (Exclusively in Pharmacy)
+    if ($action === 'pharmacy_stock_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist', 'hospital_owner', 'platform_admin']);
+
+        $hId = Tenant::id();
+        $drugId = (int)($_POST['drug_item_id'] ?? 0);
+        $batchNo = clean_input($_POST['batch_number'] ?? '');
+        $mfg = clean_input($_POST['manufacturer'] ?? 'Standard Pharma');
+        $mfgDate = !empty($_POST['mfg_date']) ? clean_input($_POST['mfg_date']) : null;
+        $expiry = clean_input($_POST['expiry_date'] ?? date('Y-m-d', strtotime('+1 year')));
+        $cost = (float)($_POST['unit_purchase_price'] ?? 0.00);
+        $sale = (float)($_POST['unit_sale_price'] ?? 0.00);
+        $qty = (int)($_POST['quantity'] ?? 1);
+
+        if ($drugId <= 0 || empty($batchNo) || $qty <= 0) {
+            set_flash('danger', 'Please provide a valid medicine, batch number, and quantity greater than zero.');
+            header("Location: index.php?page=pharmacy&tab=stock");
+            exit;
+        }
+
+        // Check if batch number already exists for this drug
+        $chk = $db->prepare("SELECT id, current_quantity FROM `drug_batches` WHERE `hospital_id` = ? AND `drug_item_id` = ? AND `batch_number` = ? LIMIT 1");
+        $chk->execute([$hId, $drugId, $batchNo]);
+        $existing = $chk->fetch(PDO::FETCH_ASSOC);
+
+        if ($existing) {
+            $upd = $db->prepare("
+                UPDATE `drug_batches` 
+                SET `current_quantity` = `current_quantity` + ?, `initial_quantity` = `initial_quantity` + ?,
+                    `unit_purchase_price` = ?, `unit_sale_price` = ?, `expiry_date` = ?, `status` = 'Active'
+                WHERE `id` = ?
+            ");
+            $upd->execute([$qty, $qty, $cost, $sale, $expiry, $existing['id']]);
+            $batchId = (int)$existing['id'];
+        } else {
+            $stmt = $db->prepare("
+                INSERT INTO `drug_batches` 
+                (`hospital_id`, `drug_item_id`, `batch_number`, `manufacturer`, `mfg_date`, `expiry_date`, `unit_purchase_price`, `unit_sale_price`, `initial_quantity`, `current_quantity`, `status`, `created_at`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active', NOW())
+            ");
+            $stmt->execute([$hId, $drugId, $batchNo, $mfg, $mfgDate, $expiry, $cost, $sale, $qty, $qty]);
+            $batchId = (int)$db->lastInsertId();
+        }
+
+        // Sync to inventory_items
+        $drugRow = $db->prepare("SELECT brand_name, generic_name FROM `drug_items` WHERE id = ?");
+        $drugRow->execute([$drugId]);
+        $dInfo = $drugRow->fetch(PDO::FETCH_ASSOC);
+        if ($dInfo) {
+            $db->prepare("
+                UPDATE `inventory_items` 
+                SET `current_stock` = `current_stock` + ?, `batch_number` = ?, `expiry_date` = ?, `unit_cost_price` = ?, `unit_sale_price` = ?
+                WHERE `hospital_id` = ? AND (`item_name` LIKE ? OR `generic_name` LIKE ?)
+            ")->execute([$qty, $batchNo, $expiry, $cost, $sale, $hId, '%' . $dInfo['brand_name'] . '%', '%' . $dInfo['generic_name'] . '%']);
+        }
+
+        AuditLogger::log('CREATE', 'drug_batches', $batchId, null, [
+            'batch_number' => $batchNo,
+            'quantity' => $qty,
+            'cost' => $cost,
+            'sale' => $sale
+        ]);
+
+        set_flash('success', "Medicine Batch '$batchNo' ($qty units) successfully received into Pharmacy Stock.");
+        header("Location: index.php?page=pharmacy&tab=stock");
+        exit;
+    }
+
+    // 14. Pharmacy Bulk Medicine Stock Entry Action (Exclusively in Pharmacy)
+    if ($action === 'pharmacy_bulk_stock_store' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        verify_csrf();
+        Auth::requireRole(['super_admin', 'hospital_admin', 'pharmacist', 'hospital_owner', 'platform_admin']);
+
+        $hId = Tenant::id();
+        $drugIds = $_POST['drug_item_id'] ?? [];
+        $brandNames = $_POST['brand_name'] ?? [];
+        $genericNames = $_POST['generic_name'] ?? [];
+        $categoryIds = $_POST['category_id'] ?? [];
+        $dosageForms = $_POST['dosage_form'] ?? [];
+        $strengths = $_POST['strength'] ?? [];
+        $batchNumbers = $_POST['batch_number'] ?? [];
+        $manufacturers = $_POST['manufacturer'] ?? [];
+        $mfgDates = $_POST['mfg_date'] ?? [];
+        $expiryDates = $_POST['expiry_date'] ?? [];
+        $purchasePrices = $_POST['unit_purchase_price'] ?? [];
+        $salePrices = $_POST['unit_sale_price'] ?? [];
+        $quantities = $_POST['quantity'] ?? [];
+        $isControlledList = $_POST['is_controlled_substance'] ?? [];
+
+        if (empty($brandNames) || !is_array($brandNames)) {
+            set_flash('danger', 'Please enter at least one medicine row in the bulk entry grid.');
+            header("Location: index.php?page=pharmacy&tab=bulk_entry");
+            exit;
+        }
+
+        $db->beginTransaction();
+        try {
+            $totalBatchesAdded = 0;
+            $totalUnitsAdded = 0;
+            $totalCostValuation = 0.00;
+            $addedSummary = [];
+
+            foreach ($brandNames as $i => $rawBrand) {
+                $brand = clean_input($rawBrand);
+                $batchNo = clean_input($batchNumbers[$i] ?? '');
+                $qty = (int)($quantities[$i] ?? 0);
+                $expiry = clean_input($expiryDates[$i] ?? '');
+
+                // Skip completely empty rows
+                if (empty($brand) && empty($batchNo) && $qty <= 0) {
+                    continue;
+                }
+
+                if (empty($brand) || empty($batchNo) || empty($expiry) || $qty <= 0) {
+                    throw new Exception("Row #" . ($i + 1) . " is incomplete: Medicine Name, Batch #, Expiry Date, and Quantity (>0) are required.");
+                }
+
+                $drugId = (int)($drugIds[$i] ?? 0);
+                $generic = clean_input($genericNames[$i] ?? '');
+                $catId = (int)($categoryIds[$i] ?? 1);
+                $dosage = clean_input($dosageForms[$i] ?? 'Tablet');
+                $strength = clean_input($strengths[$i] ?? '');
+                $mfg = clean_input($manufacturers[$i] ?? 'Standard Pharma');
+                $mfgDate = !empty($mfgDates[$i]) ? clean_input($mfgDates[$i]) : null;
+                $cost = (float)($purchasePrices[$i] ?? 0.00);
+                $sale = (float)($salePrices[$i] ?? 0.00);
+                $isControlled = !empty($isControlledList[$i]) ? 1 : 0;
+
+                // Resolve or create drug_items record
+                if ($drugId <= 0) {
+                    $findDrug = $db->prepare("SELECT id FROM `drug_items` WHERE `hospital_id` = ? AND `brand_name` = ? LIMIT 1");
+                    $findDrug->execute([$hId, $brand]);
+                    $existingDrugId = $findDrug->fetchColumn();
+
+                    if ($existingDrugId) {
+                        $drugId = (int)$existingDrugId;
+                    } else {
+                        $insDrug = $db->prepare("
+                            INSERT INTO `drug_items` 
+                            (`category_id`, `brand_name`, `generic_name`, `dosage_form`, `strength`, `reorder_level`, `unit_of_measure`, `requires_prescription`, `is_controlled_substance`, `status`, `hospital_id`)
+                            VALUES (?, ?, ?, ?, ?, 50, 'Pack / Strip', 1, ?, 'Active', ?)
+                        ");
+                        $insDrug->execute([$catId, $brand, $generic, $dosage, $strength, $isControlled, $hId]);
+                        $drugId = (int)$db->lastInsertId();
+                    }
+                }
+
+                // Check if batch number already exists for this drug in this hospital
+                $chkBatch = $db->prepare("SELECT id, current_quantity FROM `drug_batches` WHERE `hospital_id` = ? AND `drug_item_id` = ? AND `batch_number` = ? LIMIT 1");
+                $chkBatch->execute([$hId, $drugId, $batchNo]);
+                $existingBatch = $chkBatch->fetch(PDO::FETCH_ASSOC);
+
+                if ($existingBatch) {
+                    $updBatch = $db->prepare("
+                        UPDATE `drug_batches` 
+                        SET `current_quantity` = `current_quantity` + ?, `initial_quantity` = `initial_quantity` + ?,
+                            `unit_purchase_price` = ?, `unit_sale_price` = ?, `expiry_date` = ?, `status` = 'Active'
+                        WHERE `id` = ?
+                    ");
+                    $updBatch->execute([$qty, $qty, $cost, $sale, $expiry, $existingBatch['id']]);
+                } else {
+                    $insBatch = $db->prepare("
+                        INSERT INTO `drug_batches`
+                        (`hospital_id`, `drug_item_id`, `batch_number`, `manufacturer`, `mfg_date`, `expiry_date`, `unit_purchase_price`, `unit_sale_price`, `initial_quantity`, `current_quantity`, `status`, `created_at`)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active', NOW())
+                    ");
+                    $insBatch->execute([$hId, $drugId, $batchNo, $mfg, $mfgDate, $expiry, $cost, $sale, $qty, $qty]);
+                }
+
+                // Synchronize with inventory_items
+                $syncInv = $db->prepare("
+                    UPDATE `inventory_items`
+                    SET `current_stock` = `current_stock` + ?, `unit_cost_price` = ?, `unit_sale_price` = ?, `batch_number` = ?, `expiry_date` = ?
+                    WHERE `hospital_id` = ? AND (`item_name` LIKE ? OR `generic_name` LIKE ?)
+                ");
+                $syncInv->execute([$qty, $cost, $sale, $batchNo, $expiry, $hId, '%' . $brand . '%', '%' . $generic . '%']);
+
+                $totalBatchesAdded++;
+                $totalUnitsAdded += $qty;
+                $totalCostValuation += ($qty * $cost);
+                $addedSummary[] = "$brand (Batch: $batchNo, Qty: $qty)";
+            }
+
+            if ($totalBatchesAdded === 0) {
+                throw new Exception("No valid medicine rows were submitted. Please ensure rows have complete medicine names, batch numbers, and quantities.");
+            }
+
+            AuditLogger::log('BULK_MEDICINE_RECEIPT', 'drug_batches', 0, null, [
+                'batches_count' => $totalBatchesAdded,
+                'total_units' => $totalUnitsAdded,
+                'total_cost' => $totalCostValuation,
+                'summary' => implode(', ', array_slice($addedSummary, 0, 5))
+            ]);
+
+            $db->commit();
+
+            set_flash('success', "Bulk Medicine Entry Complete: Added $totalBatchesAdded batches ($totalUnitsAdded total units, Total Cost: Rs. " . number_format($totalCostValuation, 2) . ") into Pharmacy Inventory.");
+            header("Location: index.php?page=pharmacy&tab=stock");
+            exit;
+        } catch (Exception $e) {
+            $db->rollBack();
+            set_flash('danger', "Bulk Medicine Entry Error: " . $e->getMessage());
+            header("Location: index.php?page=pharmacy&tab=bulk_entry");
             exit;
         }
     }

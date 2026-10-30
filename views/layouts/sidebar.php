@@ -154,7 +154,7 @@ function nav_active(string $pageName, string $currentPage): string {
                 <?php if (Auth::hasRole(['super_admin', 'hospital_admin', 'pharmacist', 'doctor'])): ?>
                 <a href="index.php?page=pharmacy" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all <?= nav_active('pharmacy', $currentPage) ?>">
                     <i class="fa-solid fa-pills w-5 text-center"></i>
-                    <span>Pharmacy (Dispense)</span>
+                    <span>Pharmacy &amp; Dispensary</span>
                 </a>
                 <?php endif; ?>
 
